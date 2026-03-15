@@ -300,6 +300,113 @@
       border-radius: inherit; display: flex; align-items: center; justify-content: center;
     }
 
+    /* ===== Dashboard ===== */
+    .dash-section { margin-bottom: 24px; }
+    .dash-section-title {
+      font-size: 0.72em; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--text3); margin-bottom: 8px; padding-left: 4px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .dash-count {
+      font-size: 1em; background: var(--accent-bg); color: var(--accent);
+      border: 1px solid rgba(59,130,246,0.25); border-radius: 10px;
+      padding: 0 7px; font-weight: 700; letter-spacing: 0;
+      text-transform: none; line-height: 1.6;
+    }
+    .dash-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+      box-shadow: var(--shadow); padding: 16px;
+    }
+    .dash-card + .dash-card { margin-top: 10px; }
+    .dash-card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .dash-ticker {
+      font-size: 1.05em; font-weight: 700; letter-spacing: 0.02em;
+    }
+    .dash-badge {
+      font-size: 0.68em; padding: 2px 10px; border-radius: 20px;
+      font-weight: 600; letter-spacing: 0.04em;
+    }
+    .dash-badge-active { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+    .dash-badge-done { background: var(--surface2); color: var(--text3); border: 1px solid var(--border); }
+    .dash-badge-cycle { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(59,130,246,0.25); }
+    .dash-badge-mode { background: var(--purple-bg); color: var(--purple); border: 1px solid rgba(168,85,247,0.25); }
+    .dash-badge-orange { background: var(--orange-bg); color: var(--orange); border: 1px solid var(--orange-border); }
+    .dash-badge-teal { background: var(--teal-bg); color: var(--teal); border: 1px solid rgba(20,184,166,0.25); }
+
+    .dash-v-value {
+      text-align: center; padding: 8px 0 12px;
+    }
+    .dash-v-value .label { font-size: 0.72em; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+    .dash-v-value .amount { font-size: 1.8em; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; margin-top: 2px; }
+
+    .dash-band {
+      padding: 8px 0 4px; margin: 0 4px;
+    }
+    .dash-band-labels {
+      display: flex; justify-content: space-between; font-size: 0.7em; color: var(--text3); margin-bottom: 4px; font-weight: 500;
+    }
+    .dash-band-bar {
+      position: relative; height: 8px; background: var(--surface3); border-radius: 4px; overflow: visible;
+    }
+    .dash-band-fill {
+      position: absolute; left: 0; top: 0; height: 100%; border-radius: 4px;
+      background: linear-gradient(90deg, var(--accent), var(--teal));
+      transition: width 0.3s ease;
+    }
+    .dash-band-marker {
+      position: absolute; top: -4px; width: 3px; height: 16px;
+      background: var(--orange); border-radius: 2px;
+      transform: translateX(-50%);
+      box-shadow: 0 0 6px rgba(245,158,11,0.5);
+    }
+
+    .dash-stats {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+      background: var(--border); border-radius: var(--radius-xs); overflow: hidden;
+      margin-top: 12px;
+    }
+    .dash-stat {
+      background: var(--surface); padding: 10px 12px; text-align: center;
+    }
+    .dash-stat .label { font-size: 0.68em; color: var(--text3); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
+    .dash-stat .value { font-size: 0.95em; font-weight: 700; margin-top: 2px; }
+
+    .dash-meta {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+      font-size: 0.75em; color: var(--text3);
+    }
+    .dash-meta-item { display: flex; align-items: center; gap: 4px; }
+
+    .dash-progress { margin-top: 8px; }
+    .dash-progress-header {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.8em; margin-bottom: 6px;
+    }
+    .dash-progress-header .label { font-weight: 600; }
+    .dash-progress-bar {
+      height: 6px; background: var(--surface3); border-radius: 3px; overflow: hidden;
+    }
+    .dash-progress-fill {
+      height: 100%; border-radius: 3px; transition: width 0.3s ease;
+    }
+
+    .dash-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 0; font-size: 0.84em;
+    }
+    .dash-row + .dash-row { border-top: 1px solid var(--border); }
+    .dash-row-left { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .dash-row-right { color: var(--text2); font-size: 0.9em; display: flex; align-items: center; gap: 6px; }
+
+    .dash-refresh-info {
+      text-align: right; font-size: 0.68em; color: var(--text3); margin-top: 4px; padding-right: 4px;
+    }
+
     /* ===== Responsive ===== */
     @media (max-width: 480px) {
       .container { padding: 16px 12px 80px; }
@@ -319,6 +426,7 @@
     </header>
     <div id="toast" class="toast"></div>
     <div id="modal-root"></div>
+    <div id="dashboard"></div>
     <div id="app"><div class="loading-state"><div class="spinner"></div>Loading...</div></div>
   </div>
 
@@ -1288,8 +1396,236 @@
       $('modal-root').innerHTML = '';
     }
 
+    // ==================== Dashboard ====================
+    let dashboardTimer = null;
+
+    function fmtUSD(v) { return v != null ? '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'; }
+    function fmtKRW(v) { return v != null ? Number(v).toLocaleString('ko-KR') + '원' : '-'; }
+    function fmtQty(v) { return v != null ? Number(v).toLocaleString() + '주' : '-'; }
+
+    async function loadDashboard() {
+      try {
+        const [summaryRes, vrRes, cyclesRes, rdRes, scalpRes] = await Promise.allSettled([
+          fetch('/status/summary').then(r => r.json()),
+          fetch('/status/vr').then(r => r.json()),
+          fetch('/status/cycles').then(r => r.json()),
+          fetch('/status/realtimeDdsobV2').then(r => r.json()),
+          fetch('/status/momentumScalp').then(r => r.json()),
+        ]);
+
+        const vr = vrRes.status === 'fulfilled' ? vrRes.value : {};
+        const cycles = cyclesRes.status === 'fulfilled' ? cyclesRes.value : {};
+        const rd = rdRes.status === 'fulfilled' ? rdRes.value : {};
+        const scalp = scalpRes.status === 'fulfilled' ? scalpRes.value : {};
+
+        const vrKeys = Object.keys(vr).filter(k => vr[k] && vr[k].ticker);
+        const cycleKeys = Object.keys(cycles).filter(k => cycles[k] && cycles[k].ticker);
+        const rdKeys = Object.keys(rd).filter(k => rd[k] && rd[k].status);
+        const scalpKeys = Object.keys(scalp).filter(k => scalp[k] && scalp[k].status);
+
+        if (vrKeys.length === 0 && cycleKeys.length === 0 && rdKeys.length === 0 && scalpKeys.length === 0) {
+          $('dashboard').innerHTML = '';
+          return;
+        }
+
+        let html = '';
+
+        // VR Section
+        if (vrKeys.length > 0) {
+          html += `<div class="dash-section"><div class="dash-section-title">VR 매매 상태</div>`;
+          vrKeys.forEach(key => {
+            const v = vr[key];
+            const targetValue = Number(v.targetValue || 0);
+            const minBand = Number(v.minBand || 0);
+            const maxBand = Number(v.maxBand || 0);
+            const totalQty = Number(v.totalQuantity || 0);
+            const avgPrice = Number(v.avgPrice || 0);
+            const currentEval = totalQty * avgPrice;
+            const pool = Number(v.pool || 0);
+            const cycleNum = v.cycleNumber || 0;
+            const mode = v.investmentMode || 'accumulate';
+            const modeLabel = mode === 'accumulate' ? '적립식' : mode === 'lump' ? '거치식' : '인출식';
+            const pending = v.pendingOrders || 0;
+
+            // Band position (0-100%)
+            const bandRange = maxBand - minBand;
+            let bandPos = bandRange > 0 ? ((currentEval - minBand) / bandRange) * 100 : 50;
+            bandPos = Math.max(0, Math.min(100, bandPos));
+
+            // V update days
+            let vUpdateText = '-';
+            if (v.lastVUpdateDate) {
+              const lastUpdate = new Date(v.lastVUpdateDate);
+              const nextUpdate = new Date(lastUpdate.getTime() + 14 * 24 * 60 * 60 * 1000);
+              const now = new Date();
+              const daysLeft = Math.ceil((nextUpdate - now) / (24 * 60 * 60 * 1000));
+              vUpdateText = daysLeft > 0 ? daysLeft + '일 후' : '오늘';
+            }
+
+            html += `
+              <div class="dash-card">
+                <div class="dash-card-header">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span class="dash-ticker">${v.ticker || key}</span>
+                    <span class="dash-badge dash-badge-cycle">#${cycleNum}</span>
+                    <span class="dash-badge dash-badge-mode">${modeLabel}</span>
+                  </div>
+                  <span class="dash-badge ${v.status === 'active' ? 'dash-badge-active' : 'dash-badge-done'}">${v.status || 'idle'}</span>
+                </div>
+
+                <div class="dash-v-value">
+                  <div class="label">V값 (목표 평가금)</div>
+                  <div class="amount">${fmtUSD(targetValue)}</div>
+                </div>
+
+                <div class="dash-band">
+                  <div class="dash-band-labels">
+                    <span>Min ${fmtUSD(minBand)}</span>
+                    <span>Max ${fmtUSD(maxBand)}</span>
+                  </div>
+                  <div class="dash-band-bar">
+                    <div class="dash-band-fill" style="width:${bandPos}%"></div>
+                    <div class="dash-band-marker" style="left:${bandPos}%"></div>
+                  </div>
+                </div>
+
+                <div class="dash-stats">
+                  <div class="dash-stat"><div class="label">보유수량</div><div class="value">${fmtQty(totalQty)}</div></div>
+                  <div class="dash-stat"><div class="label">평단가</div><div class="value">${fmtUSD(avgPrice)}</div></div>
+                  <div class="dash-stat"><div class="label">Pool</div><div class="value">${fmtUSD(pool)}</div></div>
+                  <div class="dash-stat"><div class="label">사이클</div><div class="value">#${cycleNum}</div></div>
+                </div>
+
+                <div class="dash-meta">
+                  <div class="dash-meta-item">V 업데이트: <strong>${vUpdateText}</strong></div>
+                  ${pending > 0 ? `<div class="dash-meta-item"><span class="dash-badge dash-badge-orange">대기 주문 ${pending}건</span></div>` : ''}
+                </div>
+              </div>`;
+          });
+          html += `</div>`;
+        }
+
+        // Cycles (Infinite) Section
+        if (cycleKeys.length > 0) {
+          html += `<div class="dash-section"><div class="dash-section-title">무한매수법 사이클</div>`;
+          cycleKeys.forEach(key => {
+            const c = cycles[key];
+            const ticker = c.ticker || key;
+            const cycleNum = c.cycleNumber || 0;
+            const status = c.status || 'unknown';
+            const statusLabel = status === 'active' || status === 'running' ? '진행중' : '완료';
+            const isActive = status === 'active' || status === 'running';
+            const splitCount = Number(c.splitCount || 40);
+            const totalQty = Number(c.totalQuantity || 0);
+            const avgPrice = Number(c.avgPrice || 0);
+            const totalInvested = Number(c.totalInvested || 0);
+            const remainingCash = Number(c.remainingCash || 0);
+            const buyPerRound = Number(c.buyPerRound || 0);
+
+            // T value: figure out current round from invested / buyPerRound
+            const currentRound = buyPerRound > 0 ? Math.round(totalInvested / buyPerRound) : 0;
+            const halfPoint = Math.ceil(splitCount / 2);
+            const isFirstHalf = currentRound <= halfPoint;
+            const progressPct = splitCount > 0 ? Math.min(100, (currentRound / splitCount) * 100) : 0;
+            const halfLabel = isFirstHalf ? '전반전' : '후반전';
+            const progressColor = isFirstHalf ? 'var(--accent)' : 'var(--orange)';
+
+            html += `
+              <div class="dash-card">
+                <div class="dash-card-header">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span class="dash-ticker">${ticker}</span>
+                    <span class="dash-badge dash-badge-cycle">#${cycleNum}</span>
+                  </div>
+                  <span class="dash-badge ${isActive ? 'dash-badge-active' : 'dash-badge-done'}">${statusLabel}</span>
+                </div>
+
+                <div class="dash-progress">
+                  <div class="dash-progress-header">
+                    <span class="label">T=${currentRound} / ${splitCount}분할</span>
+                    <span class="dash-badge ${isFirstHalf ? 'dash-badge-cycle' : 'dash-badge-orange'}">${halfLabel}</span>
+                  </div>
+                  <div class="dash-progress-bar">
+                    <div class="dash-progress-fill" style="width:${progressPct}%;background:${progressColor}"></div>
+                  </div>
+                </div>
+
+                <div class="dash-stats">
+                  <div class="dash-stat"><div class="label">보유수량</div><div class="value">${fmtQty(totalQty)}</div></div>
+                  <div class="dash-stat"><div class="label">평단가</div><div class="value">${fmtUSD(avgPrice)}</div></div>
+                  <div class="dash-stat"><div class="label">누적투자</div><div class="value">${fmtUSD(totalInvested)}</div></div>
+                  <div class="dash-stat"><div class="label">잔여현금</div><div class="value">${fmtUSD(remainingCash)}</div></div>
+                </div>
+              </div>`;
+          });
+          html += `</div>`;
+        }
+
+        // RealtimeDdsob V2 Section
+        if (rdKeys.length > 0) {
+          html += `<div class="dash-section"><div class="dash-section-title">실사오팔v2 상태 <span class="dash-count">${rdKeys.length}종목</span></div>`;
+          rdKeys.forEach(key => {
+            const r = rd[key];
+            const ticker = r.ticker || key;
+            const status = r.status || 'idle';
+            const buyCount = Array.isArray(r.buyRecords) ? r.buyRecords.length : 0;
+            const splitCount = r.splitCount || '-';
+            html += `
+              <div class="dash-card" style="padding:12px 16px">
+                <div class="dash-row" style="padding:0;border:none">
+                  <div class="dash-row-left">
+                    <span class="dash-ticker" style="font-size:0.92em">${ticker}</span>
+                    <span class="dash-badge ${status === 'active' || status === 'buying' ? 'dash-badge-active' : 'dash-badge-done'}">${status}</span>
+                  </div>
+                  <div class="dash-row-right">매수 ${buyCount} / ${splitCount}분할</div>
+                </div>
+              </div>`;
+          });
+          html += `</div>`;
+        }
+
+        // Momentum Scalp Section
+        if (scalpKeys.length > 0) {
+          html += `<div class="dash-section"><div class="dash-section-title">스캘핑 상태 <span class="dash-count">${scalpKeys.length}종목</span></div>`;
+          scalpKeys.forEach(key => {
+            const s = scalp[key];
+            const ticker = s.ticker || key;
+            const status = s.status || 'idle';
+            const entryPrice = s.entryPrice;
+            html += `
+              <div class="dash-card" style="padding:12px 16px">
+                <div class="dash-row" style="padding:0;border:none">
+                  <div class="dash-row-left">
+                    <span class="dash-ticker" style="font-size:0.92em">${ticker}</span>
+                    <span class="dash-badge ${status === 'holding' || status === 'active' ? 'dash-badge-active' : 'dash-badge-done'}">${status}</span>
+                  </div>
+                  <div class="dash-row-right">${entryPrice ? '진입 ' + fmtKRW(entryPrice) : ''}</div>
+                </div>
+              </div>`;
+          });
+          html += `</div>`;
+        }
+
+        // Refresh info
+        const now = new Date();
+        const timeStr = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0') + ':' + now.getSeconds().toString().padStart(2, '0');
+        html += `<div class="dash-refresh-info">마지막 갱신: ${timeStr}</div>`;
+
+        $('dashboard').innerHTML = html;
+      } catch (e) {
+        console.error('Dashboard load error:', e);
+      }
+    }
+
+    function startDashboardRefresh() {
+      if (dashboardTimer) clearInterval(dashboardTimer);
+      dashboardTimer = setInterval(loadDashboard, 30000);
+    }
+
     // ==================== Init ====================
     load();
+    loadDashboard();
+    startDashboardRefresh();
   </script>
 </body>
 </html>

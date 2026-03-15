@@ -10,6 +10,7 @@ import { initLocalStore } from './lib/localStore';
 import { registerAllCrons } from './cron';
 import { accountRoutes } from './routes/accounts';
 import { configRoutes } from './routes/config';
+import { statusRoutes } from './routes/status';
 import { startTelegramPolling } from './telegram/poller';
 
 const app = express();
@@ -30,6 +31,9 @@ app.use('/accounts', accountRoutes);
 
 // 설정 API
 app.use('/config', configRoutes);
+
+// 상태 조회 API (대시보드)
+app.use('/status', statusRoutes);
 
 // 서버 시작
 async function start() {
