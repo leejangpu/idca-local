@@ -4,6 +4,5 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src"],
-  "exclude": ["src/runners/realtimeV2.ts"]
+  "include": ["src"]
 }
