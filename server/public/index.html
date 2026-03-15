@@ -3,214 +3,666 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IDCA Local — 설정</title>
+  <title>IDCA Local</title>
   <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d28;
+      --surface2: #232734;
+      --border: #2e3345;
+      --text: #e1e4ed;
+      --text2: #8b90a0;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --green: #22c55e;
+      --green-bg: #0f2a1d;
+      --red: #ef4444;
+      --red-bg: #2a0f0f;
+      --orange: #f59e0b;
+      --radius: 10px;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; max-width: 800px; margin: 0 auto; }
-    h1 { color: #00d4ff; margin-bottom: 20px; font-size: 1.4em; }
-    h2 { color: #7b8cde; margin: 24px 0 12px; font-size: 1.1em; border-bottom: 1px solid #333; padding-bottom: 6px; }
-    .card { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-    .row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1a1a2e; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* Layout */
+    .container { max-width: 720px; margin: 0 auto; padding: 24px 16px 80px; }
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+    header h1 { font-size: 1.3em; font-weight: 700; letter-spacing: -0.02em; }
+    .badge { font-size: 0.7em; padding: 3px 8px; border-radius: 20px; font-weight: 500; }
+    .badge-on { background: var(--green-bg); color: var(--green); }
+    .badge-off { background: var(--red-bg); color: var(--red); }
+
+    /* Toast */
+    .toast {
+      position: fixed; top: 16px; right: 16px; padding: 12px 20px; border-radius: var(--radius);
+      font-size: 0.85em; font-weight: 500; z-index: 100; opacity: 0;
+      transition: opacity 0.3s, transform 0.3s; transform: translateY(-8px);
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.success { background: var(--green-bg); color: var(--green); border: 1px solid #1a4731; }
+    .toast.error { background: var(--red-bg); color: var(--red); border: 1px solid #4a1a1a; }
+
+    /* Section */
+    .section { margin-bottom: 20px; }
+    .section-title {
+      font-size: 0.75em; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text2); margin-bottom: 8px; padding-left: 4px;
+    }
+
+    /* Card */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+    }
+    .card + .card { margin-top: 8px; }
+
+    /* Row */
+    .row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 13px 16px; border-bottom: 1px solid var(--border);
+      min-height: 48px;
+    }
     .row:last-child { border-bottom: none; }
-    .row label { font-size: 0.9em; color: #aaa; min-width: 140px; }
-    .row input, .row select { background: #0f3460; border: 1px solid #444; color: #fff; padding: 6px 10px; border-radius: 4px; width: 200px; font-size: 0.9em; }
-    .row input:focus, .row select:focus { outline: none; border-color: #00d4ff; }
-    .toggle { position: relative; width: 48px; height: 26px; cursor: pointer; }
-    .toggle input { opacity: 0; width: 0; height: 0; }
-    .toggle .slider { position: absolute; inset: 0; background: #444; border-radius: 26px; transition: 0.3s; }
-    .toggle .slider:before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; bottom: 3px; background: #ccc; border-radius: 50%; transition: 0.3s; }
-    .toggle input:checked + .slider { background: #00d4ff; }
-    .toggle input:checked + .slider:before { transform: translateX(22px); background: #fff; }
-    .btn { background: #00d4ff; color: #000; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.9em; }
-    .btn:hover { background: #00b8d9; }
-    .btn-danger { background: #e74c3c; color: #fff; }
-    .btn-danger:hover { background: #c0392b; }
-    .actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
-    .status { padding: 8px 12px; border-radius: 4px; margin-bottom: 12px; font-size: 0.85em; display: none; }
-    .status.success { display: block; background: #1a4731; color: #4ade80; }
-    .status.error { display: block; background: #4a1a1a; color: #f87171; }
-    .ticker-list { margin-top: 8px; }
-    .ticker-item { display: flex; gap: 8px; align-items: center; padding: 6px 0; flex-wrap: wrap; }
-    .ticker-item input { width: 100px; }
-    .ticker-item .remove-btn { background: none; border: none; color: #e74c3c; cursor: pointer; font-size: 1.2em; }
-    .section-tab { display: flex; gap: 4px; margin-bottom: 12px; }
-    .section-tab button { background: #0f3460; border: 1px solid #333; color: #aaa; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
-    .section-tab button.active { background: #00d4ff; color: #000; border-color: #00d4ff; }
-    .hidden { display: none; }
-    .loading { text-align: center; padding: 40px; color: #666; }
+    .row-label { font-size: 0.88em; font-weight: 500; }
+    .row-desc { font-size: 0.75em; color: var(--text2); margin-top: 2px; }
+    .row-left { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+    .row-right { flex-shrink: 0; margin-left: 12px; }
+
+    /* Toggle */
+    .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; display: inline-block; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle .track {
+      position: absolute; inset: 0; background: #3a3f50; border-radius: 24px; transition: 0.2s;
+    }
+    .toggle .track::after {
+      content: ''; position: absolute; width: 18px; height: 18px;
+      left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s;
+    }
+    .toggle input:checked + .track { background: var(--green); }
+    .toggle input:checked + .track::after { transform: translateX(20px); }
+
+    /* Inputs */
+    .input {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      padding: 7px 10px; border-radius: 6px; font-size: 0.85em; width: 140px;
+      text-align: right; outline: none; transition: border-color 0.2s;
+    }
+    .input:focus { border-color: var(--accent); }
+    .input-sm { width: 90px; }
+    .input-xs { width: 70px; }
+
+    select.input {
+      text-align: left; appearance: none; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b90a0' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px;
+    }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 2px; background: var(--surface); border-radius: var(--radius); padding: 3px; margin-bottom: 12px; border: 1px solid var(--border); }
+    .tab {
+      flex: 1; text-align: center; padding: 8px 0; border-radius: 7px; font-size: 0.85em;
+      font-weight: 500; cursor: pointer; color: var(--text2); transition: 0.2s; border: none; background: none;
+    }
+    .tab.active { background: var(--accent); color: #fff; }
+    .tab:hover:not(.active) { color: var(--text); }
+
+    /* Sub-tabs (strategy detail) */
+    .subtabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+    .subtab {
+      padding: 6px 14px; border-radius: 6px; font-size: 0.8em; font-weight: 500;
+      cursor: pointer; color: var(--text2); border: 1px solid var(--border); background: var(--surface); transition: 0.2s;
+    }
+    .subtab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* Buttons */
+    .btn {
+      padding: 9px 20px; border-radius: 8px; font-size: 0.85em; font-weight: 600;
+      cursor: pointer; border: none; transition: 0.2s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-sm { padding: 5px 12px; font-size: 0.8em; }
+
+    .actions { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--border); }
+
+    /* Ticker List */
+    .ticker-list { padding: 12px 16px; }
+    .ticker-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 10px; margin: 3px 4px 3px 0; font-size: 0.82em; font-weight: 500;
+    }
+    .ticker-chip .remove {
+      cursor: pointer; color: var(--text2); font-size: 1.1em; line-height: 1;
+      transition: color 0.2s;
+    }
+    .ticker-chip .remove:hover { color: var(--red); }
+    .ticker-add { display: flex; gap: 6px; margin-top: 8px; }
+    .ticker-add .input { width: 100px; text-align: left; }
+
+    /* Group heading inside card */
+    .group-heading {
+      font-size: 0.75em; font-weight: 600; color: var(--accent);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 10px 16px 4px; border-bottom: none;
+    }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 40px 20px; color: var(--text2); font-size: 0.9em; }
+
+    /* Loading */
+    .loading { text-align: center; padding: 60px; color: var(--text2); }
+    .spinner {
+      width: 24px; height: 24px; border: 3px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  <h1>IDCA Local 설정</h1>
-  <div id="status" class="status"></div>
-  <div id="app" class="loading">로딩 중...</div>
+  <div class="container">
+    <header>
+      <h1>IDCA Local</h1>
+      <span id="master-badge" class="badge badge-off">OFF</span>
+    </header>
+    <div id="toast" class="toast"></div>
+    <div id="app"><div class="loading"><div class="spinner"></div>로딩 중...</div></div>
+  </div>
 
   <script>
     const API = '/config';
-    let allConfig = {};
+    let C = {}; // allConfig
+
+    // ==================== Helpers ====================
+    function $(id) { return document.getElementById(id); }
+    function toast(msg, type = 'success') {
+      const t = $('toast');
+      t.textContent = msg; t.className = `toast ${type} show`;
+      clearTimeout(t._tid);
+      t._tid = setTimeout(() => t.className = 'toast', 2500);
+    }
+    function fmt(v) { return v == null ? '' : String(v); }
+    function num(v, fallback = 0) { const n = Number(v); return isNaN(n) ? fallback : n; }
+    function pct(v) { return v != null ? (v * 100).toFixed(2) : ''; }
+    function fromPct(v) { return num(v) / 100; }
 
     // ==================== API ====================
-    async function loadConfig() {
+    async function load() {
       const res = await fetch(API);
-      allConfig = await res.json();
+      C = await res.json();
       render();
     }
-
     async function saveTrading(data) {
-      const res = await fetch(`${API}/trading`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-      return res.json();
+      await fetch(`${API}/trading`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
     }
-
     async function saveStrategy(market, strategy, data) {
-      const res = await fetch(`${API}/${market}/${strategy}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-      return res.json();
+      await fetch(`${API}/${market}/${strategy}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
     }
 
-    function showStatus(msg, type = 'success') {
-      const el = document.getElementById('status');
-      el.textContent = msg;
-      el.className = `status ${type}`;
-      setTimeout(() => { el.className = 'status'; }, 3000);
-    }
+    // ==================== State ====================
+    let activeMarket = 'domestic';
+    let activeStrategyTab = null; // 'basic' | 'autoSelect' | 'autoSelectUS' | 'autoSelectCrypto'
 
-    // ==================== Render ====================
+    // ==================== Render Main ====================
     function render() {
-      const t = allConfig.trading || {};
-      const app = document.getElementById('app');
+      const t = C.trading || {};
+      $('master-badge').textContent = t.tradingEnabled ? 'ON' : 'OFF';
+      $('master-badge').className = `badge ${t.tradingEnabled ? 'badge-on' : 'badge-off'}`;
 
-      app.innerHTML = `
-        <h2>매매 활성화</h2>
-        <div class="card">
-          <div class="row">
-            <label>전체 매매</label>
-            <label class="toggle"><input type="checkbox" id="tradingEnabled" ${t.tradingEnabled ? 'checked' : ''} onchange="toggleTrading(this)"><span class="slider"></span></label>
-          </div>
-          <div class="row">
-            <label>자동 승인</label>
-            <label class="toggle"><input type="checkbox" id="autoApprove" ${t.autoApprove ? 'checked' : ''} onchange="toggleAutoApprove(this)"><span class="slider"></span></label>
+      const dm = t.domestic || {};
+      const ov = t.overseas || {};
+
+      $('app').innerHTML = `
+        <!-- Master Controls -->
+        <div class="section">
+          <div class="section-title">기본 설정</div>
+          <div class="card">
+            ${toggleRow('전체 매매', '모든 자동매매의 마스터 스위치', t.tradingEnabled, 'onToggleTrading(this)')}
+            ${toggleRow('자동 승인', '주문 실행 전 승인 없이 자동 체결', t.autoApprove, 'onToggleAutoApprove(this)')}
           </div>
         </div>
 
-        <h2>시장별 설정</h2>
-        <div class="section-tab">
-          <button class="active" onclick="showMarket('domestic', this)">국내</button>
-          <button onclick="showMarket('overseas', this)">해외</button>
+        <!-- Market Tabs -->
+        <div class="section">
+          <div class="section-title">시장 설정</div>
+          <div class="tabs">
+            <button class="tab ${activeMarket==='domestic'?'active':''}" onclick="switchMarket('domestic')">국내</button>
+            <button class="tab ${activeMarket==='overseas'?'active':''}" onclick="switchMarket('overseas')">해외</button>
+          </div>
+
+          <div id="market-content">
+            ${activeMarket === 'domestic' ? renderDomestic(dm) : renderOverseas(ov)}
+          </div>
         </div>
 
-        <div id="market-domestic">${renderMarket('domestic', t.domestic)}</div>
-        <div id="market-overseas" class="hidden">${renderMarket('overseas', t.overseas)}</div>
-
-        <div id="strategy-detail"></div>
+        <!-- Strategy Detail -->
+        <div id="strategy-section"></div>
       `;
 
-      // 활성 전략이 있으면 자동 표시
-      const dm = t.domestic || {};
-      if (dm.strategy) showStrategyDetail('domestic', dm.strategy);
+      const currentStrategy = activeMarket === 'domestic' ? dm.strategy : ov.strategy;
+      if (currentStrategy) renderStrategyDetail(activeMarket, currentStrategy);
     }
 
-    function renderMarket(market, mc) {
-      const cfg = mc || { enabled: false, strategy: null };
-      const strategies = market === 'domestic'
-        ? [['momentumScalp', '모멘텀 스캘핑'], ['realtimeDdsobV2', '실사오팔v2']]
-        : [['infinite', '무한매수법'], ['vr', 'VR 리밸런싱'], ['realtimeDdsobV2', '실사오팔v2'], ['realtimeDdsobV2_1', '실사오팔v2.1']];
-
+    // ==================== Market Renderers ====================
+    function renderDomestic(mc) {
+      const strategies = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실시간 매수매도 v2']];
       return `
         <div class="card">
-          <div class="row">
-            <label>${market === 'domestic' ? '국내' : '해외'} 시장</label>
-            <label class="toggle"><input type="checkbox" ${cfg.enabled ? 'checked' : ''} onchange="toggleMarket('${market}', this)"><span class="slider"></span></label>
-          </div>
-          <div class="row">
-            <label>전략</label>
-            <select onchange="changeStrategy('${market}', this.value)">
-              <option value="">선택 안 함</option>
-              ${strategies.map(([val, label]) => `<option value="${val}" ${cfg.strategy === val ? 'selected' : ''}>${label}</option>`).join('')}
-            </select>
-          </div>
+          ${toggleRow('국내 시장 활성화', '', mc.enabled, "onToggleMarket('domestic',this)")}
+          ${selectRow('전략 선택', strategies, mc.strategy, "onChangeStrategy('domestic',this.value)")}
+          ${toggleRow('스윙 활성화', '스윙 매매 병행', mc.swingEnabled, "onToggleSwing(this)")}
         </div>
       `;
     }
 
-    function showStrategyDetail(market, strategy) {
-      if (!strategy) { document.getElementById('strategy-detail').innerHTML = ''; return; }
-      const data = allConfig.strategies?.[market]?.[strategy] || {};
-      const el = document.getElementById('strategy-detail');
-
-      el.innerHTML = `
-        <h2>${market === 'domestic' ? '국내' : '해외'} — ${strategy} 상세 설정</h2>
+    function renderOverseas(mc) {
+      const strategies = [['infinite','무한매수법'],['vr','VR 리밸런싱'],['realtimeDdsobV2','실시간 매수매도 v2'],['realtimeDdsobV2_1','실시간 매수매도 v2.1']];
+      return `
         <div class="card">
-          <pre id="strategy-json" contenteditable="true" style="background:#0f3460; padding:12px; border-radius:4px; font-size:0.85em; white-space:pre-wrap; min-height:200px; outline:none; border:1px solid #333;">${JSON.stringify(data, null, 2)}</pre>
-          <div class="actions">
-            <button class="btn" onclick="saveStrategyJson('${market}', '${strategy}')">저장</button>
-          </div>
+          ${toggleRow('해외 시장 활성화', '', mc.enabled, "onToggleMarket('overseas',this)")}
+          ${selectRow('전략 선택', strategies, mc.strategy, "onChangeStrategy('overseas',this.value)")}
         </div>
       `;
+    }
+
+    // ==================== Strategy Detail Renderers ====================
+    function renderStrategyDetail(market, strategy) {
+      const data = C.strategies?.[market]?.[strategy];
+      if (!data) { $('strategy-section').innerHTML = ''; return; }
+
+      const label = { momentumScalp:'모멘텀 스캘핑', realtimeDdsobV2:'실시간 매수매도 v2', realtimeDdsobV2_1:'실시간 매수매도 v2.1', infinite:'무한매수법', vr:'VR 리밸런싱' }[strategy] || strategy;
+
+      let tabs = '';
+      let content = '';
+
+      if (strategy === 'momentumScalp') {
+        content = renderMomentumScalp(data, market);
+      } else if (strategy === 'vr') {
+        content = renderVR(data, market);
+      } else if (strategy === 'infinite') {
+        content = renderInfinite(data, market);
+      } else if (strategy.startsWith('realtimeDdsobV2')) {
+        activeStrategyTab = activeStrategyTab || 'basic';
+        const hasCrypto = market === 'domestic';
+        tabs = `
+          <div class="subtabs">
+            <button class="subtab ${activeStrategyTab==='basic'?'active':''}" onclick="switchStratTab('basic')">기본 설정</button>
+            ${data.autoSelectEnabled != null ? `<button class="subtab ${activeStrategyTab==='autoSelect'?'active':''}" onclick="switchStratTab('autoSelect')">자동선정 (국내)</button>` : ''}
+            ${data.autoSelectEnabledUS != null ? `<button class="subtab ${activeStrategyTab==='autoSelectUS'?'active':''}" onclick="switchStratTab('autoSelectUS')">자동선정 (미국)</button>` : ''}
+            ${hasCrypto && data.autoSelectEnabledCrypto != null ? `<button class="subtab ${activeStrategyTab==='autoSelectCrypto'?'active':''}" onclick="switchStratTab('autoSelectCrypto')">자동선정 (코인)</button>` : ''}
+          </div>
+        `;
+        content = renderRealtimeDdsob(data, market, strategy);
+      }
+
+      $('strategy-section').innerHTML = `
+        <div class="section">
+          <div class="section-title">${label} 상세 설정</div>
+          ${tabs}
+          <div id="strategy-content">${content}</div>
+        </div>
+      `;
+    }
+
+    // -- Momentum Scalp --
+    function renderMomentumScalp(d, market) {
+      return `
+        <div class="card">
+          ${toggleRow('활성화', '', d.enabled, `onStratField('${market}','momentumScalp','enabled',this.checked)`)}
+          ${toggleRow('그림자 모드', '실제 주문 없이 시뮬레이션', d.shadowMode, `onStratField('${market}','momentumScalp','shadowMode',this.checked)`)}
+          ${numberRow('슬롯 수', '동시 보유 종목 수', d.slotCount, `onStratFieldNum('${market}','momentumScalp','slotCount',this.value)`)}
+          ${selectRow('배분 모드', [['equal','균등'],['fixed','고정 금액']], d.allocationMode, `onStratField('${market}','momentumScalp','allocationMode',this.value)`)}
+          ${numberRow('고정 금액', '종목당 투자금 (원)', d.fixedAmount, `onStratFieldNum('${market}','momentumScalp','fixedAmount',this.value)`)}
+          ${numberRow('종목당 금액', '레거시 종목당 투자금', d.amountPerStock, `onStratFieldNum('${market}','momentumScalp','amountPerStock',this.value)`)}
+          ${numberRow('최소 주문금액', '원', d.minOrderAmount, `onStratFieldNum('${market}','momentumScalp','minOrderAmount',this.value)`)}
+          ${numberRow('거래량 상위', '종목', d.volumeRankTop, `onStratFieldNum('${market}','momentumScalp','volumeRankTop',this.value)`)}
+        </div>
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">HTS 조건검색</div>
+          ${textRow('HTS 사용자 ID', d.htsUserId, `onStratField('${market}','momentumScalp','htsUserId',this.value)`)}
+          ${textRow('조건식 이름', d.conditionName, `onStratField('${market}','momentumScalp','conditionName',this.value)`)}
+          ${textRow('조건식 번호', d.conditionSeq, `onStratField('${market}','momentumScalp','conditionSeq',this.value)`)}
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','momentumScalp')">저장</button>
+        </div>
+      `;
+    }
+
+    // -- VR --
+    function renderVR(d, market) {
+      return `
+        <div class="card">
+          ${toggleRow('활성화', '', d.enabled, `onStratField('${market}','vr','enabled',this.checked)`)}
+          ${textRow('티커', d.ticker, `onStratField('${market}','vr','ticker',this.value)`)}
+          ${selectRow('투자 모드', [['accumulate','적립식'],['lump','거치식']], d.investmentMode, `onStratField('${market}','vr','investmentMode',this.value)`)}
+          ${numberRow('정기 투자금', 'USD', d.periodicAmount, `onStratFieldNum('${market}','vr','periodicAmount',this.value)`)}
+          ${numberRow('기울기', 'V 공식 기울기', d.gradient, `onStratFieldNum('${market}','vr','gradient',this.value)`)}
+          ${pctRow('밴드 범위', '', d.bandPercent, `onStratFieldPct('${market}','vr','bandPercent',this.value)`)}
+          ${selectRow('공식', [['basic','기본']], d.formulaType, `onStratField('${market}','vr','formulaType',this.value)`)}
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','vr')">저장</button>
+        </div>
+      `;
+    }
+
+    // -- Infinite --
+    function renderInfinite(d, market) {
+      return `
+        <div class="card">
+          ${toggleRow('사이클 종료 후 정지', '', d.stopAfterCycleEnd, `onStratField('${market}','infinite','stopAfterCycleEnd',this.checked)`)}
+          ${renderTickerList(d.tickers || [], market, 'infinite')}
+        </div>
+        ${d.autoSelectConfig ? renderAutoSelectSection(d, 'autoSelectConfig', 'autoSelectEnabled', market, 'infinite', '자동선정') : ''}
+        ${d.autoSelectConfigUS ? renderAutoSelectSection(d, 'autoSelectConfigUS', 'autoSelectEnabledUS', market, 'infinite', '자동선정 (미국)') : ''}
+        <div class="actions">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','infinite')">저장</button>
+        </div>
+      `;
+    }
+
+    // -- RealtimeDdsob --
+    function renderRealtimeDdsob(d, market, strategy) {
+      if (activeStrategyTab === 'autoSelect' && d.autoSelectConfig) {
+        return renderAutoSelectCard(d, 'autoSelectConfig', 'autoSelectEnabled', market, strategy, '국내');
+      }
+      if (activeStrategyTab === 'autoSelectUS' && d.autoSelectConfigUS) {
+        return renderAutoSelectCard(d, 'autoSelectConfigUS', 'autoSelectEnabledUS', market, strategy, '미국');
+      }
+      if (activeStrategyTab === 'autoSelectCrypto' && d.autoSelectConfigCrypto) {
+        return renderAutoSelectCryptoCard(d, market, strategy);
+      }
+      // basic
+      return `
+        <div class="card">
+          ${toggleRow('사이클 종료 후 정지', '', d.stopAfterCycleEnd, `onStratField('${market}','${strategy}','stopAfterCycleEnd',this.checked)`)}
+          ${renderTickerList(d.tickers || [], market, strategy)}
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${strategy}')">저장</button>
+        </div>
+      `;
+    }
+
+    // -- AutoSelect Card --
+    function renderAutoSelectCard(d, configKey, enabledKey, market, strategy, regionLabel) {
+      const ac = d[configKey] || {};
+      const enabled = d[enabledKey];
+      const prefix = `${market}','${strategy}`;
+      return `
+        <div class="card">
+          ${toggleRow(`${regionLabel} 자동선정`, '', enabled, `onStratField('${prefix}','${enabledKey}',this.checked)`)}
+          <div class="group-heading">선정 설정</div>
+          ${selectRow('원금 모드', [['auto','자동'],['manual','수동']], ac.principalMode, `onAutoField('${market}','${strategy}','${configKey}','principalMode',this.value)`)}
+          ${numberRow('종목당 원금', '', ac.principalPerTicker, `onAutoFieldNum('${market}','${strategy}','${configKey}','principalPerTicker',this.value)`)}
+          ${numberRow('종목 수', '', ac.stockCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','stockCount',this.value)`)}
+          ${numberRow('분할 수', '', ac.splitCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','splitCount',this.value)`)}
+          ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','${configKey}','profitPercent',this.value)`)}
+          ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','forceSellCandles',this.value)`)}
+          ${numberRow('캔들 간격 (분)', '', ac.intervalMinutes, `onAutoFieldNum('${market}','${strategy}','${configKey}','intervalMinutes',this.value)`)}
+          ${ac.selectionMode !== undefined ? selectRow('선정 모드', [['mixed','혼합'],['marketCapOnly','시가총액'],['volumeOnly','거래량'],['sideways','횡보'],['tradingAmount','거래대금']], ac.selectionMode, `onAutoField('${market}','${strategy}','${configKey}','selectionMode',this.value)`) : ''}
+          ${ac.maxStockPrice !== undefined ? numberRow('최대 주가', '', ac.maxStockPrice, `onAutoFieldNum('${market}','${strategy}','${configKey}','maxStockPrice',this.value)`) : ''}
+          ${ac.minMarketCap !== undefined ? numberRow('최소 시가총액', '', ac.minMarketCap, `onAutoFieldNum('${market}','${strategy}','${configKey}','minMarketCap',this.value)`) : ''}
+        </div>
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">손절 설정</div>
+          ${toggleRow('자동 손절', '', ac.autoStopLoss, `onAutoField('${market}','${strategy}','${configKey}','autoStopLoss',this.checked)`)}
+          ${numberRow('손절 %', '음수 (예: -5)', ac.stopLossPercent, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossPercent',this.value)`)}
+          ${toggleRow('소진 손절', '', ac.exhaustionStopLoss, `onAutoField('${market}','${strategy}','${configKey}','exhaustionStopLoss',this.checked)`)}
+          ${ac.stopLossMultiplier !== undefined ? numberRow('손절 배수', '', ac.stopLossMultiplier, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossMultiplier',this.value)`) : ''}
+          ${ac.minDropPercent !== undefined ? numberRow('최소 하락 %', '', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','${configKey}','minDropPercent',this.value)`) : ''}
+          ${ac.peakCheckCandles !== undefined ? numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','peakCheckCandles',this.value)`) : ''}
+          ${ac.ascendingSplit !== undefined ? toggleRow('상승 분할', '', ac.ascendingSplit, `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit',this.checked)`) : ''}
+          ${ac.spreadFilterEnabled !== undefined ? toggleRow('스프레드 필터', '', ac.spreadFilterEnabled, `onAutoField('${market}','${strategy}','${configKey}','spreadFilterEnabled',this.checked)`) : ''}
+        </div>
+        ${ac.htsUserId !== undefined ? `
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">HTS 조건검색</div>
+          ${textRow('HTS 사용자 ID', ac.htsUserId, `onAutoField('${market}','${strategy}','${configKey}','htsUserId',this.value)`)}
+          ${textRow('조건식 이름', ac.conditionName, `onAutoField('${market}','${strategy}','${configKey}','conditionName',this.value)`)}
+          ${ac.includeETF !== undefined ? toggleRow('ETF 포함', '', ac.includeETF, `onAutoField('${market}','${strategy}','${configKey}','includeETF',this.checked)`) : ''}
+        </div>` : ''}
+        <div class="actions">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${strategy}')">저장</button>
+        </div>
+      `;
+    }
+
+    // -- AutoSelect Crypto Card --
+    function renderAutoSelectCryptoCard(d, market, strategy) {
+      const ac = d.autoSelectConfigCrypto || {};
+      return `
+        <div class="card">
+          ${toggleRow('코인 자동선정', '', d.autoSelectEnabledCrypto, `onStratField('${market}','${strategy}','autoSelectEnabledCrypto',this.checked)`)}
+          <div class="group-heading">선정 설정</div>
+          ${selectRow('원금 모드', [['auto','자동'],['manual','수동']], ac.principalMode, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','principalMode',this.value)`)}
+          ${numberRow('코인 수', '', ac.coinCount, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','coinCount',this.value)`)}
+          ${numberRow('원금', '', ac.principal, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','principal',this.value)`)}
+          ${numberRow('분할 수', '', ac.splitCount, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','splitCount',this.value)`)}
+          ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','autoSelectConfigCrypto','profitPercent',this.value)`)}
+          ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','forceSellCandles',this.value)`)}
+          ${numberRow('캔들 간격 (분)', '', ac.intervalMinutes, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','intervalMinutes',this.value)`)}
+          ${numberRow('선정 주기 (시간)', '', ac.selectionIntervalHours, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','selectionIntervalHours',this.value)`)}
+        </div>
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">필터</div>
+          ${toggleRow('EMA 20 필터', '', ac.ema20Filter, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ema20Filter',this.checked)`)}
+          ${toggleRow('EMA 5 필터', '', ac.ema5Filter, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ema5Filter',this.checked)`)}
+          ${toggleRow('스테이블코인 제외', '', ac.excludeStablecoins, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','excludeStablecoins',this.checked)`)}
+          ${toggleRow('매수 RSI 필터', '', ac.buyRsiFilterEnabled, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','buyRsiFilterEnabled',this.checked)`)}
+          ${numberRow('매수 RSI 최소', '', ac.buyRsiMin, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','buyRsiMin',this.value)`)}
+          ${numberRow('매수 RSI 최대', '', ac.buyRsiMax, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','buyRsiMax',this.value)`)}
+          ${toggleRow('RSI 필터', '', ac.rsiFilterEnabled, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','rsiFilterEnabled',this.checked)`)}
+          ${numberRow('RSI 최소', '', ac.rsiMin, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','rsiMin',this.value)`)}
+          ${numberRow('RSI 최대', '', ac.rsiMax, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','rsiMax',this.value)`)}
+          ${toggleRow('지표 필터', '', ac.indicatorFilterEnabled, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','indicatorFilterEnabled',this.checked)`)}
+          ${pctRow('최소 변동률', '', ac.minChangeRate, `onAutoFieldPct('${market}','${strategy}','autoSelectConfigCrypto','minChangeRate',this.value)`)}
+          ${numberRow('EMA20 이격 최소', '', ac.ema20DisparityMin, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','ema20DisparityMin',this.value)`)}
+          ${numberRow('EMA20 이격 최대', '', ac.ema20DisparityMax, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','ema20DisparityMax',this.value)`)}
+        </div>
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">손절 / 기타</div>
+          ${numberRow('손절 %', '', ac.stopLossPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','stopLossPercent',this.value)`)}
+          ${numberRow('최소 하락 %', '', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropPercent',this.value)`)}
+          ${numberRow('최소 하락 틱', '', ac.minDropTicks, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropTicks',this.value)`)}
+          ${numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','peakCheckCandles',this.value)`)}
+          ${toggleRow('상승 분할', '', ac.ascendingSplit, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ascendingSplit',this.checked)`)}
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${strategy}')">저장</button>
+        </div>
+      `;
+    }
+
+    // ==================== Row Builders ====================
+    function toggleRow(label, desc, checked, onchange) {
+      return `
+        <div class="row">
+          <div class="row-left">
+            <div class="row-label">${label}</div>
+            ${desc ? `<div class="row-desc">${desc}</div>` : ''}
+          </div>
+          <div class="row-right">
+            <label class="toggle"><input type="checkbox" ${checked ? 'checked' : ''} onchange="${onchange}"><span class="track"></span></label>
+          </div>
+        </div>`;
+    }
+    function numberRow(label, desc, value, onchange) {
+      return `
+        <div class="row">
+          <div class="row-left">
+            <div class="row-label">${label}</div>
+            ${desc ? `<div class="row-desc">${desc}</div>` : ''}
+          </div>
+          <div class="row-right">
+            <input class="input input-sm" type="number" value="${fmt(value)}" onchange="${onchange}">
+          </div>
+        </div>`;
+    }
+    function pctRow(label, desc, value, onchange) {
+      return `
+        <div class="row">
+          <div class="row-left">
+            <div class="row-label">${label}</div>
+            ${desc ? `<div class="row-desc">${desc}</div>` : ''}
+          </div>
+          <div class="row-right">
+            <div style="display:flex;align-items:center;gap:4px">
+              <input class="input input-xs" type="number" step="0.01" value="${pct(value)}" onchange="${onchange}">
+              <span style="color:var(--text2);font-size:0.85em">%</span>
+            </div>
+          </div>
+        </div>`;
+    }
+    function textRow(label, value, onchange) {
+      return `
+        <div class="row">
+          <div class="row-left"><div class="row-label">${label}</div></div>
+          <div class="row-right">
+            <input class="input" type="text" value="${fmt(value)}" onchange="${onchange}">
+          </div>
+        </div>`;
+    }
+    function selectRow(label, options, current, onchange) {
+      return `
+        <div class="row">
+          <div class="row-left"><div class="row-label">${label}</div></div>
+          <div class="row-right">
+            <select class="input" onchange="${onchange}">
+              <option value="">선택 안 함</option>
+              ${options.map(([v,l]) => `<option value="${v}" ${current===v?'selected':''}>${l}</option>`).join('')}
+            </select>
+          </div>
+        </div>`;
+    }
+    function renderTickerList(tickers, market, strategy) {
+      const chips = (tickers || []).map((t, i) => {
+        if (typeof t === 'object') {
+          return `<span class="ticker-chip">${t.ticker || t.stockName || JSON.stringify(t).slice(0,20)} <span class="remove" onclick="removeTicker('${market}','${strategy}',${i})">&times;</span></span>`;
+        }
+        return `<span class="ticker-chip">${t} <span class="remove" onclick="removeTicker('${market}','${strategy}',${i})">&times;</span></span>`;
+      }).join('');
+      return `
+        <div class="ticker-list">
+          <div class="row-label" style="margin-bottom:6px">티커 목록</div>
+          <div>${chips || '<span style="color:var(--text2);font-size:0.85em">등록된 티커 없음</span>'}</div>
+          <div class="ticker-add">
+            <input class="input" type="text" id="new-ticker-${market}-${strategy}" placeholder="티커 입력">
+            <button class="btn btn-primary btn-sm" onclick="addTicker('${market}','${strategy}')">추가</button>
+          </div>
+        </div>`;
     }
 
     // ==================== Actions ====================
-    async function toggleTrading(el) {
-      const t = allConfig.trading || {};
-      t.tradingEnabled = el.checked;
-      await saveTrading(t);
-      allConfig.trading = t;
-      showStatus(el.checked ? '매매 활성화' : '매매 비활성화');
+    async function onToggleTrading(el) {
+      C.trading.tradingEnabled = el.checked;
+      await saveTrading(C.trading);
+      $('master-badge').textContent = el.checked ? 'ON' : 'OFF';
+      $('master-badge').className = `badge ${el.checked ? 'badge-on' : 'badge-off'}`;
+      toast(el.checked ? '매매 활성화' : '매매 비활성화');
+    }
+    async function onToggleAutoApprove(el) {
+      C.trading.autoApprove = el.checked;
+      await saveTrading(C.trading);
+      toast('자동 승인 ' + (el.checked ? 'ON' : 'OFF'));
+    }
+    async function onToggleMarket(market, el) {
+      if (!C.trading[market]) C.trading[market] = { enabled: false, strategy: null };
+      C.trading[market].enabled = el.checked;
+      await saveTrading(C.trading);
+      toast(`${market === 'domestic' ? '국내' : '해외'} 시장 ${el.checked ? '활성화' : '비활성화'}`);
+    }
+    async function onToggleSwing(el) {
+      if (!C.trading.domestic) C.trading.domestic = { enabled: false, strategy: null };
+      C.trading.domestic.swingEnabled = el.checked;
+      await saveTrading(C.trading);
+      toast('스윙 ' + (el.checked ? 'ON' : 'OFF'));
+    }
+    async function onChangeStrategy(market, value) {
+      if (!C.trading[market]) C.trading[market] = { enabled: false, strategy: null };
+      C.trading[market].strategy = value || null;
+      await saveTrading(C.trading);
+      activeStrategyTab = 'basic';
+      if (value) renderStrategyDetail(market, value);
+      else $('strategy-section').innerHTML = '';
+      toast(`전략: ${value || '없음'}`);
     }
 
-    async function toggleAutoApprove(el) {
-      const t = allConfig.trading || {};
-      t.autoApprove = el.checked;
-      await saveTrading(t);
-      allConfig.trading = t;
-      showStatus('자동 승인 ' + (el.checked ? 'ON' : 'OFF'));
+    function switchMarket(m) {
+      activeMarket = m;
+      activeStrategyTab = 'basic';
+      render();
+    }
+    function switchStratTab(tab) {
+      activeStrategyTab = tab;
+      const t = C.trading || {};
+      const mc = t[activeMarket] || {};
+      if (mc.strategy) renderStrategyDetail(activeMarket, mc.strategy);
     }
 
-    async function toggleMarket(market, el) {
-      const t = allConfig.trading || {};
-      if (!t[market]) t[market] = { enabled: false, strategy: null };
-      t[market].enabled = el.checked;
-      await saveTrading(t);
-      allConfig.trading = t;
-      showStatus(`${market} 시장 ${el.checked ? '활성화' : '비활성화'}`);
+    // Strategy field updaters (in-memory only, saved on "저장" click)
+    function getStrat(market, strategy) {
+      if (!C.strategies) C.strategies = {};
+      if (!C.strategies[market]) C.strategies[market] = {};
+      if (!C.strategies[market][strategy]) C.strategies[market][strategy] = {};
+      return C.strategies[market][strategy];
+    }
+    function onStratField(market, strategy, field, value) { getStrat(market, strategy)[field] = value; }
+    function onStratFieldNum(market, strategy, field, value) { getStrat(market, strategy)[field] = num(value); }
+    function onStratFieldPct(market, strategy, field, value) { getStrat(market, strategy)[field] = fromPct(value); }
+    function onAutoField(market, strategy, configKey, field, value) {
+      const s = getStrat(market, strategy);
+      if (!s[configKey]) s[configKey] = {};
+      s[configKey][field] = value;
+    }
+    function onAutoFieldNum(market, strategy, configKey, field, value) {
+      const s = getStrat(market, strategy);
+      if (!s[configKey]) s[configKey] = {};
+      s[configKey][field] = num(value);
+    }
+    function onAutoFieldPct(market, strategy, configKey, field, value) {
+      const s = getStrat(market, strategy);
+      if (!s[configKey]) s[configKey] = {};
+      s[configKey][field] = fromPct(value);
     }
 
-    async function changeStrategy(market, strategy) {
-      const t = allConfig.trading || {};
-      if (!t[market]) t[market] = { enabled: false, strategy: null };
-      t[market].strategy = strategy || null;
-      await saveTrading(t);
-      allConfig.trading = t;
-      showStrategyDetail(market, strategy);
-      showStatus(`${market} 전략: ${strategy || '없음'}`);
-    }
-
-    function showMarket(market, btn) {
-      document.querySelectorAll('.section-tab button').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('market-domestic').classList.toggle('hidden', market !== 'domestic');
-      document.getElementById('market-overseas').classList.toggle('hidden', market !== 'overseas');
-
-      const t = allConfig.trading || {};
-      const mc = t[market] || {};
-      if (mc.strategy) showStrategyDetail(market, mc.strategy);
-      else document.getElementById('strategy-detail').innerHTML = '';
-    }
-
-    async function saveStrategyJson(market, strategy) {
+    async function doSaveStrategy(market, strategy) {
+      const data = getStrat(market, strategy);
       try {
-        const json = document.getElementById('strategy-json').textContent;
-        const data = JSON.parse(json);
         await saveStrategy(market, strategy, data);
-        allConfig.strategies = allConfig.strategies || {};
-        allConfig.strategies[market] = allConfig.strategies[market] || {};
-        allConfig.strategies[market][strategy] = data;
-        showStatus('전략 설정 저장 완료');
+        toast('저장 완료');
       } catch (e) {
-        showStatus('JSON 파싱 오류: ' + e.message, 'error');
+        toast('저장 실패: ' + e.message, 'error');
       }
     }
 
+    function removeTicker(market, strategy, index) {
+      const s = getStrat(market, strategy);
+      if (s.tickers && Array.isArray(s.tickers)) {
+        s.tickers.splice(index, 1);
+        renderStrategyDetail(market, strategy);
+      }
+    }
+    function addTicker(market, strategy) {
+      const input = $(`new-ticker-${market}-${strategy}`);
+      const val = input.value.trim().toUpperCase();
+      if (!val) return;
+      const s = getStrat(market, strategy);
+      if (!s.tickers) s.tickers = [];
+      s.tickers.push(val);
+      input.value = '';
+      renderStrategyDetail(market, strategy);
+    }
+
     // ==================== Init ====================
-    loadConfig();
+    load();
   </script>
 </body>
 </html>
