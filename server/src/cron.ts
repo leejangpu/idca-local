@@ -93,16 +93,16 @@ export function registerAllCrons(): void {
     });
   });
 
-  // 스윙 체결 확인 — 매일 KST 15:40 (장마감 후)
-  cron.schedule('40 6 * * 1-5', () => {
+  // 스윙 체결 확인 — 매일 KST 15:50 (장마감 20분 후, 데이터 확정 대기)
+  cron.schedule('50 6 * * 1-5', () => {
     forEachAccount('SwingFills', async ctx => {
       const shadow = ctx.store.getStrategyConfig<SwingConfig>('domestic', 'swing')?.shadowMode !== false;
       await checkPendingFills(shadow, ctx);
     });
   });
 
-  // 스윙 미체결 취소 — 매일 KST 15:45
-  cron.schedule('45 6 * * 1-5', () => {
+  // 스윙 미체결 취소 — 매일 KST 15:55
+  cron.schedule('55 6 * * 1-5', () => {
     forEachAccount('SwingCancel', async ctx => {
       const shadow = ctx.store.getStrategyConfig<SwingConfig>('domestic', 'swing')?.shadowMode !== false;
       await cancelUnfilledOrders(shadow, ctx);
