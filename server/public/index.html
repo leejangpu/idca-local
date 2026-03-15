@@ -1413,17 +1413,17 @@
           fetch('/status/momentumScalp').then(r => r.json()),
         ]);
 
-        const vr = vrRes.status === 'fulfilled' ? vrRes.value : {};
-        const cycles = cyclesRes.status === 'fulfilled' ? cyclesRes.value : {};
-        const rd = rdRes.status === 'fulfilled' ? rdRes.value : {};
-        const scalp = scalpRes.status === 'fulfilled' ? scalpRes.value : {};
+        const vrArr = vrRes.status === 'fulfilled' ? (Array.isArray(vrRes.value) ? vrRes.value : Object.values(vrRes.value)) : [];
+        const cyclesArr = cyclesRes.status === 'fulfilled' ? (Array.isArray(cyclesRes.value) ? cyclesRes.value : Object.values(cyclesRes.value)) : [];
+        const rdArr = rdRes.status === 'fulfilled' ? (Array.isArray(rdRes.value) ? rdRes.value : Object.values(rdRes.value)) : [];
+        const scalpArr = scalpRes.status === 'fulfilled' ? (Array.isArray(scalpRes.value) ? scalpRes.value : Object.values(scalpRes.value)) : [];
 
-        const vrKeys = Object.keys(vr).filter(k => vr[k] && vr[k].ticker);
-        const cycleKeys = Object.keys(cycles).filter(k => cycles[k] && cycles[k].ticker);
-        const rdKeys = Object.keys(rd).filter(k => rd[k] && rd[k].status);
-        const scalpKeys = Object.keys(scalp).filter(k => scalp[k] && scalp[k].status);
+        const vrItems = vrArr.filter(v => v && v.ticker);
+        const cycleItems = cyclesArr.filter(c => c && c.ticker);
+        const rdItems = rdArr.filter(r => r && r.status);
+        const scalpItems = scalpArr.filter(s => s && s.status);
 
-        if (vrKeys.length === 0 && cycleKeys.length === 0 && rdKeys.length === 0 && scalpKeys.length === 0) {
+        if (vrItems.length === 0 && cycleItems.length === 0 && rdItems.length === 0 && scalpItems.length === 0) {
           $('dashboard').innerHTML = '';
           return;
         }
@@ -1431,10 +1431,9 @@
         let html = '';
 
         // VR Section
-        if (vrKeys.length > 0) {
+        if (vrItems.length > 0) {
           html += `<div class="dash-section"><div class="dash-section-title">VR 매매 상태</div>`;
-          vrKeys.forEach(key => {
-            const v = vr[key];
+          vrItems.forEach(v => {
             const targetValue = Number(v.targetValue || 0);
             const minBand = Number(v.minBand || 0);
             const maxBand = Number(v.maxBand || 0);
@@ -1506,11 +1505,10 @@
         }
 
         // Cycles (Infinite) Section
-        if (cycleKeys.length > 0) {
+        if (cycleItems.length > 0) {
           html += `<div class="dash-section"><div class="dash-section-title">무한매수법 사이클</div>`;
-          cycleKeys.forEach(key => {
-            const c = cycles[key];
-            const ticker = c.ticker || key;
+          cycleItems.forEach(c => {
+            const ticker = c.ticker || c._ticker || 'unknown';
             const cycleNum = c.cycleNumber || 0;
             const status = c.status || 'unknown';
             const statusLabel = status === 'active' || status === 'running' ? '진행중' : '완료';
@@ -1562,11 +1560,10 @@
         }
 
         // RealtimeDdsob V2 Section
-        if (rdKeys.length > 0) {
-          html += `<div class="dash-section"><div class="dash-section-title">실사오팔v2 상태 <span class="dash-count">${rdKeys.length}종목</span></div>`;
-          rdKeys.forEach(key => {
-            const r = rd[key];
-            const ticker = r.ticker || key;
+        if (rdItems.length > 0) {
+          html += `<div class="dash-section"><div class="dash-section-title">실사오팔v2 상태 <span class="dash-count">${rdItems.length}종목</span></div>`;
+          rdItems.forEach(r => {
+            const ticker = r.ticker || r._ticker || 'unknown';
             const status = r.status || 'idle';
             const buyCount = Array.isArray(r.buyRecords) ? r.buyRecords.length : 0;
             const splitCount = r.splitCount || '-';
@@ -1585,11 +1582,10 @@
         }
 
         // Momentum Scalp Section
-        if (scalpKeys.length > 0) {
-          html += `<div class="dash-section"><div class="dash-section-title">스캘핑 상태 <span class="dash-count">${scalpKeys.length}종목</span></div>`;
-          scalpKeys.forEach(key => {
-            const s = scalp[key];
-            const ticker = s.ticker || key;
+        if (scalpItems.length > 0) {
+          html += `<div class="dash-section"><div class="dash-section-title">스캘핑 상태 <span class="dash-count">${scalpItems.length}종목</span></div>`;
+          scalpItems.forEach(s => {
+            const ticker = s.ticker || s._ticker || 'unknown';
             const status = s.status || 'idle';
             const entryPrice = s.entryPrice;
             html += `
