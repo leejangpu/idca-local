@@ -34,7 +34,7 @@ function getCredentialsAndClient(ctx?: AccountContext): { credentials: { appKey:
       appSecret: config.kis.appSecret,
       accountNo: config.kis.accountNo,
     },
-    kisClient: new KisApiClient(config.kis.paperTrading),
+    kisClient: new KisApiClient(),
   };
 }
 

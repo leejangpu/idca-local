@@ -31,7 +31,6 @@ export const config = {
     appSecret: optionalEnv('KIS_APP_SECRET', ''),
     accountNo: optionalEnv('KIS_ACCOUNT_NO', ''),
     htsUserId: optionalEnv('KIS_HTS_USER_ID', ''),
-    paperTrading: optionalEnv('KIS_PAPER_TRADING', 'false') === 'true',
   },
 
   // Telegram

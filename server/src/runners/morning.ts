@@ -23,7 +23,7 @@ export async function runMorningSnapshot(ctx?: AccountContext): Promise<void> {
   const { accountId } = config;
 
   try {
-    const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+    const kisClient = ctx?.kisClient ?? new KisApiClient();
     const credentials = ctx
       ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
       : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };

@@ -324,7 +324,7 @@ function getCredentialsAndClient(ctx?: AccountContext): { credentials: { appKey:
       appSecret: config.kis.appSecret,
       accountNo: config.kis.accountNo,
     },
-    kisClient: new KisApiClient(config.kis.paperTrading),
+    kisClient: new KisApiClient(),
   };
 }
 
@@ -346,7 +346,8 @@ export async function getConditionList(htsUserId: string, ctx?: AccountContext):
   );
 
   if (listResp.rt_cd !== '0' || !listResp.output2) {
-    throw new Error(`조건 목록 조회 실패: ${listResp.msg1}`);
+    console.error(`[ConditionList] 실패 응답:`, JSON.stringify(listResp));
+    throw new Error(`조건 목록 조회 실패: [${listResp.msg_cd}] ${listResp.msg1}`);
   }
 
   return listResp.output2.map(c => ({

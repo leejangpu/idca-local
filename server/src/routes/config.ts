@@ -38,7 +38,7 @@ configRoutes.get('/kis/condition-list', async (_req, res) => {
       appSecret: config.kis.appSecret,
       accountNo: config.kis.accountNo,
     };
-    const kisClient = new KisApiClient(config.kis.paperTrading);
+    const kisClient = new KisApiClient();
     const accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
     const result = await kisClient.getConditionSearchList(
       credentials.appKey, credentials.appSecret, accessToken, config.kis.htsUserId,
@@ -82,24 +82,13 @@ configRoutes.put('/account/:accountId/trading', (req, res) => {
   res.json({ success: true });
 });
 
-configRoutes.get('/account/:accountId/:market/:strategy', (req, res) => {
-  const store = localStore.forAccount(req.params.accountId);
-  res.json(store.getStrategyConfig(req.params.market, req.params.strategy) ?? {});
-});
-
-configRoutes.put('/account/:accountId/:market/:strategy', (req, res) => {
-  const store = localStore.forAccount(req.params.accountId);
-  store.setStrategyConfig(req.params.market, req.params.strategy, req.body);
-  res.json({ success: true });
-});
-
-// Account-scoped KIS condition list
+// Account-scoped KIS condition list (와일드카드 라우트보다 먼저 등록)
 configRoutes.get('/account/:accountId/kis/condition-list', async (req, res) => {
   try {
     const store = localStore.forAccount(req.params.accountId);
-    const creds = store.getCredentials<{ appKey: string; appSecret: string; accountNo: string; htsUserId: string; paperTrading?: boolean }>();
+    const creds = store.getCredentials<{ appKey: string; appSecret: string; accountNo: string; htsUserId: string }>();
     if (!creds) { res.status(404).json({ error: 'credentials not found' }); return; }
-    const kisClient = new KisApiClient(creds.paperTrading || false);
+    const kisClient = new KisApiClient();
     const accessToken = await getOrRefreshToken('', req.params.accountId, { appKey: creds.appKey, appSecret: creds.appSecret }, kisClient);
     const result = await kisClient.getConditionSearchList(creds.appKey, creds.appSecret, accessToken, creds.htsUserId);
     res.json(result);
@@ -115,6 +104,18 @@ configRoutes.get('/account/:accountId/active-tickers', (req, res) => {
   const market = req.query.market as string | undefined;
   const filtered = market ? tickers.filter(t => t.market === market) : tickers;
   res.json(filtered);
+});
+
+// Account-scoped strategy config (와일드카드 — 구체적 라우트보다 뒤에 위치)
+configRoutes.get('/account/:accountId/:market/:strategy', (req, res) => {
+  const store = localStore.forAccount(req.params.accountId);
+  res.json(store.getStrategyConfig(req.params.market, req.params.strategy) ?? {});
+});
+
+configRoutes.put('/account/:accountId/:market/:strategy', (req, res) => {
+  const store = localStore.forAccount(req.params.accountId);
+  store.setStrategyConfig(req.params.market, req.params.strategy, req.body);
+  res.json({ success: true });
 });
 
 // 전략별 설정 (domestic/momentumScalp.json 등)

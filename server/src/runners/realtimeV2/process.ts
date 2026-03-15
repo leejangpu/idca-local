@@ -718,7 +718,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   if (!credentials) {
     return { success: false, soldQty: 0, message: '자격증명을 찾을 수 없습니다' };
   }
-  const kisClient = ctx?.kisClient ?? new KisApiClient(false);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
 
   // 2. state 조회
@@ -901,7 +901,7 @@ export async function processRealtimeDdsobV2Trading(
     console.log(`[RealtimeDdsobV2:${tag}] No credentials found`);
     return;
   }
-  const kisClient = ctx?.kisClient ?? new KisApiClient(false);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   let accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient);
   const chatId = await getUserTelegramChatId(userId);
 

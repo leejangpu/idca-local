@@ -10,7 +10,7 @@
 
 import { config } from '../config';
 import * as localStore from '../lib/localStore';
-import { KisApiClient, DomesticDailyBarResponse, DomesticIndexPriceResponse, DomesticIndexDailyPriceResponse, DomesticHolidayResponse, getOrRefreshToken } from '../lib/kisApi';
+import { KisApiClient, DomesticDailyBarResponse, DomesticIndexPriceResponse, DomesticIndexDailyPriceResponse, DomesticHolidayResponse, getOrRefreshToken, isTokenExpiredError } from '../lib/kisApi';
 import { getCommonConfig, getMarketStrategyConfig, isMarketStrategyActive } from '../lib/configHelper';
 import { AccountContext } from '../lib/accountContext';
 import { getOccupiedTickersExcluding } from '../lib/activeTickerRegistry';
@@ -469,9 +469,9 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
     ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
     : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountId = ctx?.accountId ?? config.accountId;
-  const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
+  let accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 
   // 3-1. 휴장일 체크
   const marketOpen = await isMarketOpen(kisClient, credentials.appKey, credentials.appSecret, accessToken);
@@ -536,7 +536,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
     try {
       await processSwingTicker(
         kisClient, credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
-        tickerConfig, state, swingConfig, holdingCount, marketContext, shadowMode,
+        accountId, tickerConfig, state, swingConfig, holdingCount, marketContext, shadowMode,
       );
       processed++;
     } catch (err) {
@@ -706,7 +706,42 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
               console.error(`[Swing] ${ticker} 매수 주문 실패: ${orderRes.msg1}`);
             }
           } catch (err) {
-            console.error(`[Swing] ${ticker} 매수 주문 에러:`, (err as Error).message);
+            if (isTokenExpiredError(err)) {
+              accessToken = await getOrRefreshToken('', accountId, credentials, kisClient, true);
+              try {
+                const retryRes = await kisClient.submitDomesticOrder(
+                  credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+                  { ticker, side: 'BUY', orderType: 'LIMIT', price: buyPrice, quantity },
+                );
+                if (retryRes.rt_cd === '0') {
+                  const buyRecord: SwingBuyRecord = {
+                    price: buyPrice, quantity, amount: buyPrice * quantity,
+                    date: new Date().toISOString(), reason: 'initial',
+                    orderNo: retryRes.output?.ODNO || '',
+                  };
+                  const { avgPrice, totalQuantity, totalInvested } = calculateAvgPrice([buyRecord]);
+                  update.status = 'holding';
+                  update.checkInterval = 5;
+                  update.buyRecords = [buyRecord];
+                  update.avgPrice = avgPrice;
+                  update.totalQuantity = totalQuantity;
+                  update.totalInvested = totalInvested;
+                  update.entryDate = new Date().toISOString();
+                  update.holdingDays = 0;
+                  update.highestPrice = currentPrice;
+                  (update as Record<string, unknown>).positionPhase = 'INIT_RISK';
+                  todayEntries++;
+                  console.log(`[Swing] ${ticker} 매수 주문 성공 (토큰 재발급 후): ${quantity}주 × ${buyPrice}원`);
+                  await sendSwingNotification(`[스윙 매수] ${stockName}(${ticker})\n${quantity}주 × ${buyPrice.toLocaleString()}원 (토큰 재발급)`);
+                } else {
+                  console.error(`[Swing] ${ticker} 매수 재시도 실패: ${retryRes.msg1}`);
+                }
+              } catch (retryErr) {
+                console.error(`[Swing] ${ticker} 매수 재시도 에러:`, (retryErr as Error).message);
+              }
+            } else {
+              console.error(`[Swing] ${ticker} 매수 주문 에러:`, (err as Error).message);
+            }
           }
         }
       }
@@ -732,8 +767,9 @@ async function processSwingTicker(
   kisClient: KisApiClient,
   appKey: string,
   appSecret: string,
-  accessToken: string,
+  initialAccessToken: string,
   accountNo: string,
+  accountId: string,
   tickerConfig: SwingTickerConfig,
   state: SwingState,
   swingConfig: SwingConfig,
@@ -741,6 +777,7 @@ async function processSwingTicker(
   marketContext?: MarketContext,
   shadowMode: boolean = false,
 ): Promise<void> {
+  let accessToken = initialAccessToken;
   const { ticker, stockName } = tickerConfig;
 
   // 1. 일봉 데이터 + 지표 계산
@@ -917,7 +954,26 @@ async function processSwingTicker(
             console.error(`[Swing] ${ticker} 매도 주문 실패: ${orderRes.msg1}`);
           }
         } catch (err) {
-          console.error(`[Swing] ${ticker} 매도 주문 에러:`, (err as Error).message);
+          if (isTokenExpiredError(err)) {
+            accessToken = await getOrRefreshToken('', accountId, { appKey, appSecret }, kisClient, true);
+            try {
+              const sellPrice2 = exitResult.orderType === 'LIMIT' && exitResult.suggestedPrice
+                ? roundToKoreanTickCeil(exitResult.suggestedPrice) : 0;
+              const retryRes = await kisClient.submitDomesticOrder(
+                appKey, appSecret, accessToken, accountNo,
+                { ticker, side: 'SELL', orderType: exitResult.orderType, price: sellPrice2, quantity: sellQty },
+              );
+              if (retryRes.rt_cd === '0') {
+                console.log(`[Swing] ${ticker} 매도 재시도 성공 (토큰 재발급)`);
+              } else {
+                console.error(`[Swing] ${ticker} 매도 재시도 실패: ${retryRes.msg1}`);
+              }
+            } catch (retryErr) {
+              console.error(`[Swing] ${ticker} 매도 재시도 에러:`, (retryErr as Error).message);
+            }
+          } else {
+            console.error(`[Swing] ${ticker} 매도 주문 에러:`, (err as Error).message);
+          }
         }
       } else {
         // 추가매수 판단 (매도 안 할 때만)
@@ -992,7 +1048,24 @@ async function processSwingTicker(
               await sendSwingNotification(`[스윙 추가매수] ${stockName}(${ticker})\n${addBuyResult.suggestedQuantity}주 × ${buyPrice.toLocaleString()}원\n평단: ${avgPrice.toLocaleString()}원`);
             }
           } catch (err) {
-            console.error(`[Swing] ${ticker} 추가매수 에러:`, (err as Error).message);
+            if (isTokenExpiredError(err)) {
+              accessToken = await getOrRefreshToken('', accountId, { appKey, appSecret }, kisClient, true);
+              try {
+                const retryRes = await kisClient.submitDomesticOrder(
+                  appKey, appSecret, accessToken, accountNo,
+                  { ticker, side: 'BUY', orderType: 'LIMIT', price: buyPrice, quantity: addBuyResult.suggestedQuantity! },
+                );
+                if (retryRes.rt_cd === '0') {
+                  console.log(`[Swing] ${ticker} 추가매수 재시도 성공 (토큰 재발급)`);
+                } else {
+                  console.error(`[Swing] ${ticker} 추가매수 재시도 실패: ${retryRes.msg1}`);
+                }
+              } catch (retryErr) {
+                console.error(`[Swing] ${ticker} 추가매수 재시도 에러:`, (retryErr as Error).message);
+              }
+            } else {
+              console.error(`[Swing] ${ticker} 추가매수 에러:`, (err as Error).message);
+            }
           }
           } // end else (not shadow)
         }
@@ -1230,7 +1303,7 @@ async function processEodScan(ctx?: AccountContext): Promise<number> {
     ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
     : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountId = ctx?.accountId ?? config.accountId;
   const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 
@@ -1451,7 +1524,7 @@ export async function submitPendingOrders(shadow: boolean = true, ctx?: AccountC
     ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
     : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountId = ctx?.accountId ?? config.accountId;
   const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 
@@ -1506,7 +1579,7 @@ export async function checkPendingFills(shadow: boolean = true, ctx?: AccountCon
     ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
     : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountId = ctx?.accountId ?? config.accountId;
   const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 

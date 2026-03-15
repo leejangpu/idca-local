@@ -9,6 +9,8 @@
  *
  * 콜백:
  *   fs:{ticker}:{market} — 강제종료 확인 버튼
+ *   approve:{orderId}    — 주문 승인
+ *   reject:{orderId}     — 주문 거부
  */
 
 import { config } from '../config';
@@ -22,6 +24,8 @@ import { getCommonConfig, setCommonConfig } from '../lib/configHelper';
 import { forceStopRealtimeDdsobV2Ticker } from '../runners/realtimeV2/forceStop';
 import { type MarketType } from '../lib/marketUtils';
 import { type AccountStrategy } from '../lib/configHelper';
+import { getEnabledAccounts } from '../lib/accountContext';
+import { getOrRefreshToken, isTokenExpiredError } from '../lib/kisApi';
 
 interface TelegramMessage {
   message_id: number;
@@ -93,7 +97,227 @@ export async function handleCallbackQuery(query: TelegramCallbackQuery): Promise
     return;
   }
 
+  // 주문 승인 콜백: approve:{orderId}
+  if (data.startsWith('approve:')) {
+    const orderId = data.slice('approve:'.length);
+    await handleOrderApproval(query, chatId, messageId, orderId, true);
+    return;
+  }
+
+  // 주문 거부 콜백: reject:{orderId}
+  if (data.startsWith('reject:')) {
+    const orderId = data.slice('reject:'.length);
+    await handleOrderApproval(query, chatId, messageId, orderId, false);
+    return;
+  }
+
   await answerCallbackQuery(query.id);
+}
+
+// ==================== 주문 승인/거부 처리 ====================
+
+async function handleOrderApproval(
+  query: TelegramCallbackQuery,
+  chatId: string,
+  messageId: number,
+  orderId: string,
+  approve: boolean,
+): Promise<void> {
+  // 주문 조회 — 계좌별 store에서 검색
+  let order: Record<string, unknown> | null = null;
+  let orderStore: typeof localStore = localStore;
+
+  // 먼저 글로벌 store에서 검색
+  order = localStore.getPendingOrder<Record<string, unknown>>(orderId);
+
+  // 없으면 각 계좌 store에서 검색
+  if (!order) {
+    for (const ctx of getEnabledAccounts()) {
+      order = ctx.store.getPendingOrder<Record<string, unknown>>(orderId);
+      if (order) {
+        orderStore = ctx.store as unknown as typeof localStore;
+        break;
+      }
+    }
+  }
+
+  if (!order) {
+    await answerCallbackQuery(query.id, '주문을 찾을 수 없습니다.');
+    return;
+  }
+
+  if (order.status !== 'pending') {
+    await answerCallbackQuery(query.id, `이미 처리된 주문입니다 (${order.status})`);
+    return;
+  }
+
+  if (!approve) {
+    // ── 거부 ──
+    orderStore.setPendingOrder(orderId, {
+      ...order,
+      status: 'rejected',
+      rejectedAt: new Date().toISOString(),
+    });
+
+    await answerCallbackQuery(query.id, '주문이 거부되었습니다.');
+
+    const ticker = order.ticker as string || '?';
+    const typeLabel = order.type === 'buy' ? '매수' : order.type === 'sell' ? '매도' : '매매';
+    await editTelegramMessage(chatId, messageId,
+      `❌ <b>${ticker} ${typeLabel} 주문 거부됨</b>\n\n주문 ID: ${orderId}\n거부 시각: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`);
+    return;
+  }
+
+  // ── 승인 → 실행 ──
+  await answerCallbackQuery(query.id, '⏳ 주문 실행 중...');
+
+  const ticker = order.ticker as string;
+  const accountId = order.accountId as string;
+  const strategy = order.strategy as string;
+  const orders = (order.orders || order.buyOrders || order.sellOrders || []) as Array<{
+    orderType: string;
+    price: number;
+    quantity: number;
+    amount?: number;
+    label?: string;
+    side?: string;
+  }>;
+
+  // 계좌 컨텍스트 찾기
+  const accounts = getEnabledAccounts();
+  const ctx = accounts.find(a => a.accountId === accountId);
+
+  if (!ctx) {
+    await editTelegramMessage(chatId, messageId,
+      `❌ <b>주문 실행 실패</b>\n\n계좌를 찾을 수 없습니다: ${accountId}`);
+    orderStore.setPendingOrder(orderId, { ...order, status: 'error', error: 'account_not_found' });
+    return;
+  }
+
+  try {
+    const { credentials, kisClient } = ctx;
+    let accessToken = await getOrRefreshToken(
+      '', accountId,
+      { appKey: credentials.appKey, appSecret: credentials.appSecret },
+      kisClient,
+    );
+
+    const results: string[] = [];
+    let allSuccess = true;
+
+    // 복합 주문 처리 (combined: buyOrders + sellOrders)
+    const allOrders: Array<{ side: 'BUY' | 'SELL'; orderType: string; price: number; quantity: number; label?: string }> = [];
+
+    if (order.type === 'combined') {
+      const buyOrders = (order.buyOrders || []) as Array<{ orderType: string; price: number; quantity: number; label?: string }>;
+      const sellOrders = (order.sellOrders || []) as Array<{ orderType: string; price: number; quantity: number; label?: string }>;
+      for (const o of buyOrders) allOrders.push({ ...o, side: 'BUY' });
+      for (const o of sellOrders) allOrders.push({ ...o, side: 'SELL' });
+    } else {
+      const side: 'BUY' | 'SELL' = order.type === 'sell' ? 'SELL' : 'BUY';
+      for (const o of orders) {
+        allOrders.push({ ...o, side: o.side as 'BUY' | 'SELL' || side });
+      }
+    }
+
+    if (allOrders.length === 0) {
+      await editTelegramMessage(chatId, messageId,
+        `❌ <b>주문 실행 실패</b>\n\n실행할 주문 내역이 없습니다.`);
+      orderStore.setPendingOrder(orderId, { ...order, status: 'error', error: 'no_orders' });
+      return;
+    }
+
+    for (const sub of allOrders) {
+      try {
+        // 해외(VR/DDSOB) vs 국내 분기
+        const isDomestic = !credentials.accountNo.includes('-') || ticker.match(/^\d{6}$/);
+        let orderRes;
+
+        if (isDomestic) {
+          orderRes = await kisClient.submitDomesticOrder(
+            credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+            {
+              ticker,
+              side: sub.side,
+              orderType: sub.orderType === 'MARKET' ? 'MARKET' : 'LIMIT',
+              price: sub.price,
+              quantity: sub.quantity,
+            },
+          );
+        } else {
+          orderRes = await kisClient.submitOrder(
+            credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+            {
+              ticker,
+              side: sub.side,
+              orderType: sub.orderType as 'LOC' | 'LIMIT' | 'MOC' | 'MOO' | 'LOO',
+              price: sub.price,
+              quantity: sub.quantity,
+            },
+          );
+        }
+
+        if (orderRes.rt_cd === '0') {
+          const orderNo = orderRes.output?.ODNO || orderRes.output?.ODNO || '';
+          results.push(`✅ ${sub.side} ${sub.quantity}주 @ $${sub.price} (${orderNo})`);
+        } else {
+          allSuccess = false;
+          results.push(`❌ ${sub.side} ${sub.quantity}주: ${orderRes.msg1 || 'unknown error'}`);
+        }
+      } catch (subErr) {
+        if (isTokenExpiredError(subErr)) {
+          try {
+            accessToken = await getOrRefreshToken('', accountId, { appKey: credentials.appKey, appSecret: credentials.appSecret }, kisClient, true);
+            const isDomestic2 = !credentials.accountNo.includes('-') || ticker.match(/^\d{6}$/);
+            const retryRes = isDomestic2
+              ? await kisClient.submitDomesticOrder(credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+                  { ticker, side: sub.side, orderType: sub.orderType === 'MARKET' ? 'MARKET' : 'LIMIT', price: sub.price, quantity: sub.quantity })
+              : await kisClient.submitOrder(credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+                  { ticker, side: sub.side, orderType: sub.orderType as 'LOC' | 'LIMIT' | 'MOC' | 'MOO' | 'LOO', price: sub.price, quantity: sub.quantity });
+            if (retryRes.rt_cd === '0') {
+              results.push(`✅ ${sub.side} ${sub.quantity}주 @ $${sub.price} (${retryRes.output?.ODNO || ''}, 토큰재발급)`);
+              continue;
+            }
+          } catch { /* retry failed */ }
+        }
+        allSuccess = false;
+        results.push(`❌ ${sub.side} ${sub.quantity}주: ${subErr instanceof Error ? subErr.message : String(subErr)}`);
+      }
+
+      // API 호출 간 딜레이
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // 상태 업데이트
+    orderStore.setPendingOrder(orderId, {
+      ...order,
+      status: allSuccess ? 'executed' : 'partial',
+      approvedAt: new Date().toISOString(),
+      executedAt: new Date().toISOString(),
+      executionResults: results,
+    });
+
+    const typeLabel = order.type === 'buy' ? '매수' : order.type === 'sell' ? '매도' : '매매';
+    const statusIcon = allSuccess ? '✅' : '⚠️';
+    const statusText = allSuccess ? '체결 완료' : '일부 실패';
+
+    await editTelegramMessage(chatId, messageId,
+      `${statusIcon} <b>${ticker} ${typeLabel} ${statusText}</b>\n\n` +
+      `전략: ${strategy}\n` +
+      `계좌: ${ctx.nickname}\n\n` +
+      results.join('\n') +
+      `\n\n주문 ID: ${orderId}`);
+
+  } catch (err) {
+    orderStore.setPendingOrder(orderId, {
+      ...order,
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    await editTelegramMessage(chatId, messageId,
+      `❌ <b>${ticker} 주문 실행 실패</b>\n\n${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 // ==================== 명령어 구현 ====================

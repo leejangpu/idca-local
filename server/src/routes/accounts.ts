@@ -17,7 +17,7 @@ accountRoutes.get('/', (_req, res) => {
 
 // POST /accounts — 새 계좌 추가
 accountRoutes.post('/', (req, res) => {
-  const { id, nickname, accountNo, appKey, appSecret, htsUserId, paperTrading } = req.body;
+  const { id, nickname, accountNo, appKey, appSecret, htsUserId } = req.body;
 
   // validate id: alphanumeric + hyphen, no spaces
   if (!id || typeof id !== 'string' || !/^[a-zA-Z0-9-]+$/.test(id)) {
@@ -58,7 +58,6 @@ accountRoutes.post('/', (req, res) => {
     appSecret,
     accountNo,
     htsUserId: htsUserId || '',
-    paperTrading: paperTrading || false,
   });
 
   // set default trading config if none exists
@@ -77,7 +76,7 @@ accountRoutes.post('/', (req, res) => {
 // PUT /accounts/:accountId — 계좌 정보 수정
 accountRoutes.put('/:accountId', (req, res) => {
   const { accountId } = req.params;
-  const { nickname, accountNo, appKey, appSecret, htsUserId, paperTrading } = req.body;
+  const { nickname, accountNo, appKey, appSecret, htsUserId } = req.body;
 
   const registry = localStore.getAccountRegistry();
   const idx = registry.accounts.findIndex(a => a.id === accountId);
@@ -98,7 +97,6 @@ accountRoutes.put('/:accountId', (req, res) => {
   if (appSecret !== undefined) updated.appSecret = appSecret;
   if (accountNo !== undefined) updated.accountNo = accountNo;
   if (htsUserId !== undefined) updated.htsUserId = htsUserId;
-  if (paperTrading !== undefined) updated.paperTrading = paperTrading;
   store.setCredentials(updated);
 
   return res.json({ success: true, account: registry.accounts[idx] });

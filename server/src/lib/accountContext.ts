@@ -10,7 +10,6 @@ export interface AccountCredentials {
   appSecret: string;
   accountNo: string;
   htsUserId: string;
-  paperTrading: boolean;
 }
 
 export interface AccountContext {
@@ -38,9 +37,8 @@ export function getEnabledAccounts(): AccountContext[] {
         appSecret: creds.appSecret,
         accountNo: creds.accountNo,
         htsUserId: creds.htsUserId || '',
-        paperTrading: creds.paperTrading || false,
       },
-      kisClient: new KisApiClient(creds.paperTrading || false),
+      kisClient: new KisApiClient(),
       store,
     });
   }

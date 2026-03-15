@@ -4,7 +4,6 @@
  */
 
 const REAL_BASE_URL = 'https://openapi.koreainvestment.com:9443';
-const PAPER_BASE_URL = 'https://openapivts.koreainvestment.com:29443';
 
 interface TokenResponse {
   access_token: string;
@@ -375,8 +374,8 @@ export interface DomesticOrderHistoryResponse {
 export class KisApiClient {
   private baseUrl: string;
 
-  constructor(isPaperTrading: boolean) {
-    this.baseUrl = isPaperTrading ? PAPER_BASE_URL : REAL_BASE_URL;
+  constructor() {
+    this.baseUrl = REAL_BASE_URL;
   }
 
   /**
@@ -457,7 +456,7 @@ export class KisApiClient {
             authorization: `Bearer ${accessToken}`,
             appkey: appKey,
             appsecret: appSecret,
-            tr_id: this.baseUrl.includes('vts') ? 'VTTS3012R' : 'TTTS3012R',
+            tr_id: 'TTTS3012R',
           },
         }
       );
@@ -637,14 +636,12 @@ export class KisApiClient {
     }
   ): Promise<OrderResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
-
     // TR_ID 결정
     let trId: string;
     if (params.side === 'BUY') {
-      trId = isPaper ? 'VTTT1002U' : 'TTTT1002U';
+      trId = 'TTTT1002U';
     } else {
-      trId = isPaper ? 'VTTT1001U' : 'TTTT1006U';
+      trId = 'TTTT1006U';
     }
 
     // 주문 유형 코드 (KIS API ORD_DVSN)
@@ -721,8 +718,6 @@ export class KisApiClient {
     exchange: string = 'NASD'
   ): Promise<BuyableAmountResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
-
     return this.withRetry(async () => {
       const response = await fetch(
         `${this.baseUrl}/uapi/overseas-stock/v1/trading/inquire-psamount?` +
@@ -740,7 +735,7 @@ export class KisApiClient {
             authorization: `Bearer ${accessToken}`,
             appkey: appKey,
             appsecret: appSecret,
-            tr_id: isPaper ? 'VTTS3007R' : 'TTTS3007R',
+            tr_id: 'TTTS3007R',
           },
         }
       );
@@ -774,8 +769,6 @@ export class KisApiClient {
     ccldNccsDvsn: string = '00'
   ): Promise<OrderHistoryResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
-
     console.log(`[getOrderHistory] 조회 요청: startDate=${startDate}, endDate=${endDate}, ticker=${ticker}`);
 
     // 재시도 로직 (네트워크 오류 대비)
@@ -815,7 +808,7 @@ export class KisApiClient {
               authorization: `Bearer ${accessToken}`,
               appkey: appKey,
               appsecret: appSecret,
-              tr_id: isPaper ? 'VTTS3035R' : 'TTTS3035R',
+              tr_id: 'TTTS3035R',
             },
           }
         );
@@ -855,17 +848,7 @@ export class KisApiClient {
   ): Promise<PendingOrdersResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
 
-    // 모의투자는 미지원
-    if (this.baseUrl.includes('vts')) {
-      return {
-        rt_cd: '0',
-        msg_cd: '',
-        msg1: '모의투자는 미체결내역 조회를 지원하지 않습니다.',
-        ctx_area_fk200: '',
-        ctx_area_nk200: '',
-        output: [],
-      };
-    }
+
 
     return this.withRetry(async () => {
       const response = await fetch(
@@ -920,8 +903,7 @@ export class KisApiClient {
     }
   ): Promise<OrderResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
-    const trId = isPaper ? 'VTTT1004U' : 'TTTT1004U';
+    const trId = 'TTTT1004U';
     const exchangeCode = params.exchange || KisApiClient.getExchangeCode(params.ticker);
 
     const maxRetries = 3;
@@ -992,11 +974,6 @@ export class KisApiClient {
   ): Promise<ReservationOrderResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
 
-    // 모의투자는 미지원
-    if (this.baseUrl.includes('vts')) {
-      throw new Error('예약주문은 실전투자에서만 지원됩니다.');
-    }
-
     // TR_ID 결정 (미국 예약주문)
     const trId = params.side === 'BUY' ? 'TTTT3014U' : 'TTTT3016U';
 
@@ -1066,17 +1043,7 @@ export class KisApiClient {
   ): Promise<ReservationOrderListResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
 
-    // 모의투자는 미지원
-    if (this.baseUrl.includes('vts')) {
-      return {
-        rt_cd: '0',
-        msg_cd: '',
-        msg1: '모의투자는 예약주문 조회를 지원하지 않습니다.',
-        ctx_area_fk200: '',
-        ctx_area_nk200: '',
-        output: [],
-      };
-    }
+
 
     return this.withRetry(async () => {
       const response = await fetch(
@@ -1127,11 +1094,6 @@ export class KisApiClient {
   ): Promise<ReservationCancelResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
 
-    // 모의투자는 미지원
-    if (this.baseUrl.includes('vts')) {
-      throw new Error('예약주문 취소는 실전투자에서만 지원됩니다.');
-    }
-
     // 종목별 거래소 코드 설정
     const exchangeCode = KisApiClient.getExchangeCode(params.ticker);
 
@@ -1177,8 +1139,6 @@ export class KisApiClient {
     accountNo: string
   ): Promise<AccountAssetStatusResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
-
     return this.withRetry(async () => {
       const response = await fetch(
         `${this.baseUrl}/uapi/domestic-stock/v1/trading/inquire-account-balance?` +
@@ -1195,7 +1155,7 @@ export class KisApiClient {
             authorization: `Bearer ${accessToken}`,
             appkey: appKey,
             appsecret: appSecret,
-            tr_id: isPaper ? 'VTRP6548R' : 'CTRP6548R',
+            tr_id: 'CTRP6548R',
           },
         }
       );
@@ -1405,7 +1365,6 @@ export class KisApiClient {
     accountNo: string
   ): Promise<DomesticBalanceResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
 
     return this.withRetry(async () => {
       const response = await fetch(
@@ -1430,7 +1389,7 @@ export class KisApiClient {
             authorization: `Bearer ${accessToken}`,
             appkey: appKey,
             appsecret: appSecret,
-            tr_id: isPaper ? 'VTTC8434R' : 'TTTC8434R',
+            tr_id: 'TTTC8434R',
           },
         }
       );
@@ -1446,8 +1405,8 @@ export class KisApiClient {
 
   /**
    * 국내주식 주문 (현금)
-   * TR_ID: 매도 TTTC0011U/VTTC0011U, 매수 TTTC0012U/VTTC0012U
-   * 거래소: 실전 SOR, 모의 KRX
+   * TR_ID: 매도 TTTC0011U, 매수 TTTC0012U
+   * 거래소: KRX
    */
   async submitDomesticOrder(
     appKey: string,
@@ -1463,14 +1422,12 @@ export class KisApiClient {
     }
   ): Promise<OrderResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
-
     // TR_ID 결정
     let trId: string;
     if (params.side === 'BUY') {
-      trId = isPaper ? 'VTTC0012U' : 'TTTC0012U';
+      trId = 'TTTC0012U';
     } else {
-      trId = isPaper ? 'VTTC0011U' : 'TTTC0011U';
+      trId = 'TTTC0011U';
     }
 
     // 주문구분: 00=지정가, 01=시장가
@@ -1541,8 +1498,7 @@ export class KisApiClient {
     }
   ): Promise<OrderResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
-    const trId = isPaper ? 'VTTC0013U' : 'TTTC0013U';
+    const trId = 'TTTC0013U';
     const excgIdDvsnCd = 'KRX';
 
     const maxRetries = 3;
@@ -1610,8 +1566,6 @@ export class KisApiClient {
     ticker: string = ''
   ): Promise<DomesticOrderHistoryResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
-
     console.log(`[getDomesticOrderHistory] 조회: startDate=${startDate}, endDate=${endDate}, ccld=${ccldDvsn}, ticker=${ticker}`);
 
     // 재시도 로직 (네트워크 오류 대비)
@@ -1651,7 +1605,7 @@ export class KisApiClient {
               authorization: `Bearer ${accessToken}`,
               appkey: appKey,
               appsecret: appSecret,
-              tr_id: isPaper ? 'VTTC0081R' : 'TTTC0081R',
+              tr_id: 'TTTC0081R',
             },
           }
         );
@@ -1706,7 +1660,6 @@ export class KisApiClient {
     price: number
   ): Promise<DomesticBuyableAmountResponse> {
     const [accountPrefix, accountSuffix] = accountNo.split('-');
-    const isPaper = this.baseUrl.includes('vts');
 
     return this.withRetry(async () => {
       const response = await fetch(
@@ -1727,7 +1680,7 @@ export class KisApiClient {
             authorization: `Bearer ${accessToken}`,
             appkey: appKey,
             appsecret: appSecret,
-            tr_id: isPaper ? 'VTTC8908R' : 'TTTC8908R',
+            tr_id: 'TTTC8908R',
           },
         }
       );

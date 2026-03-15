@@ -114,11 +114,10 @@ function main() {
     const appSecret = process.env.KIS_APP_SECRET || '';
     const accountNo = process.env.KIS_ACCOUNT_NO || '';
     const htsUserId = process.env.KIS_HTS_USER_ID || '';
-    const paperTrading = process.env.KIS_PAPER_TRADING === 'true';
     if (appKey && appSecret && accountNo) {
       ensureDir(path.dirname(credFile));
       fs.writeFileSync(credFile, JSON.stringify({
-        appKey, appSecret, accountNo, htsUserId, paperTrading,
+        appKey, appSecret, accountNo, htsUserId,
         createdAt: new Date().toISOString(),
       }, null, 2), 'utf-8');
       console.log('  ✓ .env에서 credentials 생성');

@@ -146,7 +146,7 @@ async function processAccount(
   const credentials = ctx
     ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
     : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountNo = ctx?.credentials.accountNo ?? config.kis.accountNo;
   const accountId = ctx?.accountId ?? config.accountId;
   const userId = config.userId;
@@ -771,7 +771,7 @@ async function processSellAccount(
   const credentials = ctx
     ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
     : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountNo = ctx?.credentials.accountNo ?? config.kis.accountNo;
   const accountId = ctx?.accountId ?? config.accountId;
   const userId = config.userId;
@@ -1350,10 +1350,37 @@ export async function forceStopMomentumScalp(ticker: string, ctx?: AccountContex
       return { success: false, message: `${ticker} 보유 종목이 없습니다` };
     }
 
+    // 쉐도우 모드 확인
+    const store = ctx?.store ?? localStore;
+    const scalpConfig = store.getStrategyConfig<MomentumScalpConfig>('domestic', 'momentumScalp');
+    const isShadow = scalpConfig?.shadowMode === true;
+
+    if (isShadow) {
+      // 쉐도우 모드: 실제 주문 없이 상태만 삭제 + 로그
+      const todayStr = getKSTDateString();
+      if (state.entryPrice && state.entryQuantity) {
+        store.appendLog('scalpShadowLogs', todayStr, {
+          type: 'FORCE_STOP',
+          ticker,
+          stockName: state.stockName || ticker,
+          market: 'domestic',
+          strategy: 'quickScalp',
+          entryPrice: state.entryPrice,
+          entryQuantity: state.entryQuantity,
+          status: state.status,
+          reason: 'force_stop_shadow',
+          createdAt: new Date().toISOString(),
+        });
+      }
+      deleteMomentumScalpState(ticker);
+      console.log(`[QuickScalp:ForceStop] [SHADOW] ${ticker} 상태 삭제 (실제 주문 없음)`);
+      return { success: true, message: `${ticker} 강제 청산 완료 (쉐도우)` };
+    }
+
     const credentials = ctx
       ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
       : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
-    const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+    const kisClient = ctx?.kisClient ?? new KisApiClient();
     const accountNo = ctx?.credentials.accountNo ?? config.kis.accountNo;
     const accountId = ctx?.accountId ?? config.accountId;
     const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);

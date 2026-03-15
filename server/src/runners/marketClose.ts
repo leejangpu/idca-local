@@ -227,7 +227,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
       accountSummary.nickname = ctx?.nickname ?? '로컬계좌';
       accountSummary.accountNo = credentials.accountNo;
 
-      const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+      const kisClient = ctx?.kisClient ?? new KisApiClient();
       const accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient);
 
       // --- 잔고 조회 (market별 분기) ---

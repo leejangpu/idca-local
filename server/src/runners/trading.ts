@@ -20,7 +20,7 @@ import {
   calculatePrincipal,
 } from '../lib/principalCalculator';
 import { getUSMarketHolidayName, getTodayStart } from '../lib/usMarketHolidays';
-import { KisApiClient, getOrRefreshToken } from '../lib/kisApi';
+import { KisApiClient, getOrRefreshToken, isTokenExpiredError } from '../lib/kisApi';
 import {
   sendTelegramMessage,
   sendTelegramMessageWithId,
@@ -72,6 +72,139 @@ function createPendingOrder(order: Record<string, unknown>, store?: AccountStore
   return orderId;
 }
 
+/**
+ * autoApprove된 주문을 즉시 KIS API로 실행.
+ * createPendingOrder 직후 호출.
+ */
+async function executeApprovedOrder(
+  orderId: string,
+  ctx?: AccountContext,
+  store?: AccountStore,
+): Promise<void> {
+  const s = store ?? localStore;
+  const order = s.getPendingOrder<Record<string, unknown>>(orderId);
+  if (!order || order.status !== 'approved') return;
+
+  const ticker = order.ticker as string;
+  const accountId = (order.accountId as string) || ctx?.accountId || config.accountId;
+
+  // 계좌 컨텍스트 결정
+  let credentials: { appKey: string; appSecret: string; accountNo: string };
+  let kisClient: KisApiClient;
+
+  if (ctx) {
+    credentials = ctx.credentials;
+    kisClient = ctx.kisClient;
+  } else {
+    credentials = {
+      appKey: config.kis.appKey,
+      appSecret: config.kis.appSecret,
+      accountNo: config.kis.accountNo,
+    };
+    kisClient = new KisApiClient();
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getOrRefreshToken(
+      '', accountId,
+      { appKey: credentials.appKey, appSecret: credentials.appSecret },
+      kisClient,
+    );
+  } catch (err) {
+    console.error(`[AutoExec] ${ticker} 토큰 발급 실패:`, err);
+    s.setPendingOrder(orderId, { ...order, status: 'error', error: `token_error: ${(err as Error).message}` });
+    return;
+  }
+
+  // 실행할 주문 목록 수집
+  const allOrders: Array<{ side: 'BUY' | 'SELL'; orderType: string; price: number; quantity: number }> = [];
+
+  if (order.type === 'combined') {
+    const buyOrders = (order.buyOrders || []) as Array<{ orderType: string; price: number; quantity: number }>;
+    const sellOrders = (order.sellOrders || []) as Array<{ orderType: string; price: number; quantity: number }>;
+    for (const o of buyOrders) allOrders.push({ ...o, side: 'BUY' });
+    for (const o of sellOrders) allOrders.push({ ...o, side: 'SELL' });
+  } else {
+    const side: 'BUY' | 'SELL' = order.type === 'sell' ? 'SELL' : 'BUY';
+    const orders = (order.orders || []) as Array<{ orderType: string; price: number; quantity: number; side?: string }>;
+    for (const o of orders) {
+      allOrders.push({ ...o, side: (o.side as 'BUY' | 'SELL') || side });
+    }
+  }
+
+  if (allOrders.length === 0) {
+    console.log(`[AutoExec] ${ticker} 실행할 주문 없음 (orderId=${orderId})`);
+    return;
+  }
+
+  const results: string[] = [];
+  let allSuccess = true;
+
+  for (const sub of allOrders) {
+    try {
+      const orderRes = await kisClient.submitOrder(
+        credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+        {
+          ticker,
+          side: sub.side,
+          orderType: sub.orderType as 'LOC' | 'LIMIT' | 'MOC' | 'MOO' | 'LOO',
+          price: sub.price,
+          quantity: sub.quantity,
+        },
+      );
+
+      if (orderRes.rt_cd === '0') {
+        const orderNo = orderRes.output?.ODNO || '';
+        results.push(`✅ ${sub.side} ${sub.quantity}주 @ $${sub.price} (${orderNo})`);
+        console.log(`[AutoExec] ${ticker} ${sub.side} ${sub.quantity}주 @ $${sub.price} → ${orderNo}`);
+      } else {
+        allSuccess = false;
+        results.push(`❌ ${sub.side} ${sub.quantity}주: ${orderRes.msg1 || 'unknown error'}`);
+        console.error(`[AutoExec] ${ticker} ${sub.side} 실패: ${orderRes.msg1}`);
+      }
+    } catch (subErr) {
+      // 토큰 만료 시 재발급 후 1회 재시도
+      if (isTokenExpiredError(subErr)) {
+        try {
+          accessToken = await getOrRefreshToken('', accountId, { appKey: credentials.appKey, appSecret: credentials.appSecret }, kisClient, true);
+          const retryRes = await kisClient.submitOrder(
+            credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+            { ticker, side: sub.side, orderType: sub.orderType as 'LOC' | 'LIMIT' | 'MOC' | 'MOO' | 'LOO', price: sub.price, quantity: sub.quantity },
+          );
+          if (retryRes.rt_cd === '0') {
+            const orderNo = retryRes.output?.ODNO || '';
+            results.push(`✅ ${sub.side} ${sub.quantity}주 @ $${sub.price} (${orderNo}, 토큰재발급)`);
+            console.log(`[AutoExec] ${ticker} ${sub.side} 재시도 성공 → ${orderNo}`);
+            continue;
+          } else {
+            allSuccess = false;
+            results.push(`❌ ${sub.side} ${sub.quantity}주: ${retryRes.msg1 || 'retry failed'}`);
+            continue;
+          }
+        } catch (retryErr) {
+          // 재시도도 실패
+        }
+      }
+      allSuccess = false;
+      const errMsg = subErr instanceof Error ? subErr.message : String(subErr);
+      results.push(`❌ ${sub.side} ${sub.quantity}주: ${errMsg}`);
+      console.error(`[AutoExec] ${ticker} ${sub.side} 에러:`, errMsg);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  s.setPendingOrder(orderId, {
+    ...order,
+    status: allSuccess ? 'executed' : 'partial',
+    executedAt: nowISO(),
+    executionResults: results,
+  });
+
+  console.log(`[AutoExec] ${ticker} 주문 실행 완료 (${allSuccess ? '전체 성공' : '일부 실패'}): ${results.length}건`);
+}
+
 function updatePendingOrder(orderId: string, update: Record<string, unknown>, store?: AccountStore): void {
   const s = store ?? localStore;
   const existing = s.getPendingOrder<Record<string, unknown>>(orderId);
@@ -92,7 +225,7 @@ async function processVRTrading(
     appSecret: config.kis.appSecret,
     accountNo: config.kis.accountNo,
   };
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountId = ctx?.accountId ?? config.accountId;
   const userId = config.userId;
   const store: AccountStore = ctx?.store ?? localStore;
@@ -302,6 +435,7 @@ async function processVRTrading(
     };
 
     const orderId = createPendingOrder(initialOrder, store);
+    if (autoApprove) await executeApprovedOrder(orderId, ctx, store);
     console.log(`[VR] Created initial entry order: ${orderId}, qty=${buyQuantity}, amount=$${totalAmount.toFixed(2)}`);
 
     // 텔레그램 알림
@@ -582,6 +716,7 @@ async function processVRTrading(
   };
 
   const orderId = createPendingOrder(pendingOrder, store);
+  if (autoApprove) await executeApprovedOrder(orderId, ctx, store);
 
   // 텔레그램 알림
   if (chatId) {
@@ -685,7 +820,7 @@ export async function processDdsobTrading(
     appSecret: config.kis.appSecret,
     accountNo: config.kis.accountNo,
   };
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountId = ctx?.accountId ?? config.accountId;
   const userId = config.userId;
   const store: AccountStore = ctx?.store ?? localStore;
@@ -1042,6 +1177,7 @@ export async function processDdsobTrading(
   };
 
   const orderId = createPendingOrder(pendingOrderData, store);
+  if (autoApprove) await executeApprovedOrder(orderId, ctx, store);
 
   // 텔레그램 알림
   if (chatId) {
@@ -1135,7 +1271,7 @@ async function processInfiniteSellOnly(
     appSecret: config.kis.appSecret,
     accountNo: config.kis.accountNo,
   };
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountId = ctx?.accountId ?? config.accountId;
   const userId = config.userId;
   const store: AccountStore = ctx?.store ?? localStore;
@@ -1277,6 +1413,7 @@ async function processInfiniteSellOnly(
     };
 
     const orderId = createPendingOrder(sellPendingOrder, store);
+    if (autoApprove) await executeApprovedOrder(orderId, ctx, store);
 
     if (chatId) {
       const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
@@ -1333,7 +1470,7 @@ async function processDdsobSellOnly(
     appSecret: config.kis.appSecret,
     accountNo: config.kis.accountNo,
   };
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
   const accountId = ctx?.accountId ?? config.accountId;
   const userId = config.userId;
   const store: AccountStore = ctx?.store ?? localStore;
@@ -1454,6 +1591,7 @@ async function processDdsobSellOnly(
     };
 
     const orderId = createPendingOrder(pendingOrderData, store);
+    if (autoApprove) await executeApprovedOrder(orderId, ctx, store);
 
     if (chatId) {
       const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
@@ -1598,7 +1736,7 @@ async function processAccountTrading(
     appSecret: config.kis.appSecret,
     accountNo: config.kis.accountNo,
   };
-  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const kisClient = ctx?.kisClient ?? new KisApiClient();
 
   const accountCtxDisplay = {
     nickname: ctx?.nickname ?? accountId,
@@ -2054,6 +2192,7 @@ async function processAccountTrading(
         };
 
         const orderId = createPendingOrder(combinedPendingOrder, store);
+        if (autoApprove) await executeApprovedOrder(orderId, ctx, store);
 
         if (chatId) {
           const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
@@ -2124,6 +2263,7 @@ async function processAccountTrading(
         };
 
         const orderId = createPendingOrder(pendingOrderData, store);
+        if (autoApprove) await executeApprovedOrder(orderId, ctx, store);
 
         if (chatId) {
           const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
@@ -2194,6 +2334,7 @@ async function processAccountTrading(
         };
 
         const orderId = createPendingOrder(sellPendingOrder, store);
+        if (autoApprove) await executeApprovedOrder(orderId, ctx, store);
 
         if (chatId) {
           const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
