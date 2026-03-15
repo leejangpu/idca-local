@@ -344,24 +344,44 @@
     .dash-v-value .amount { font-size: 1.8em; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; margin-top: 2px; }
 
     .dash-band {
-      padding: 8px 0 4px; margin: 0 4px;
+      padding: 12px 0 4px; margin: 0 4px;
     }
     .dash-band-labels {
-      display: flex; justify-content: space-between; font-size: 0.7em; color: var(--text3); margin-bottom: 4px; font-weight: 500;
+      display: flex; justify-content: space-between; font-size: 0.7em; color: var(--text3); margin-bottom: 6px; font-weight: 500;
     }
+    .dash-band-labels .v-label { color: var(--accent); font-weight: 700; }
     .dash-band-bar {
-      position: relative; height: 8px; background: var(--surface3); border-radius: 4px; overflow: visible;
+      position: relative; height: 28px; background: var(--surface3); border-radius: 14px; overflow: visible;
     }
-    .dash-band-fill {
-      position: absolute; left: 0; top: 0; height: 100%; border-radius: 4px;
-      background: linear-gradient(90deg, var(--accent), var(--teal));
-      transition: width 0.3s ease;
+    /* 안전 구간 (밴드 내부) — 중앙 70% 영역 녹색 */
+    .dash-band-safe {
+      position: absolute; top: 0; bottom: 0; left: 15%; right: 15%;
+      background: rgba(34, 197, 94, 0.15); border-radius: 0;
     }
+    /* 현재 위치 마커 (동그란 원) */
     .dash-band-marker {
-      position: absolute; top: -4px; width: 3px; height: 16px;
-      background: var(--orange); border-radius: 2px;
-      transform: translateX(-50%);
-      box-shadow: 0 0 6px rgba(245,158,11,0.5);
+      position: absolute; top: 50%; width: 18px; height: 18px;
+      background: var(--accent); border-radius: 50%;
+      border: 2px solid var(--surface);
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 8px rgba(59,130,246,0.6);
+      transition: left 0.3s ease;
+      z-index: 2;
+    }
+    /* 위험 구간 표시 (왼쪽 빨강, 오른쪽 빨강) */
+    .dash-band-danger-left {
+      position: absolute; top: 0; bottom: 0; left: 0; width: 15%;
+      background: rgba(239, 68, 68, 0.1); border-radius: 14px 0 0 14px;
+    }
+    .dash-band-danger-right {
+      position: absolute; top: 0; bottom: 0; right: 0; width: 15%;
+      background: rgba(239, 68, 68, 0.1); border-radius: 0 14px 14px 0;
+    }
+    /* 현재 평가금 숫자 (마커 위) */
+    .dash-band-eval {
+      position: absolute; top: -18px; transform: translateX(-50%);
+      font-size: 0.68em; font-weight: 700; color: var(--accent);
+      white-space: nowrap; z-index: 3;
     }
 
     .dash-stats {
@@ -1485,11 +1505,15 @@
 
                 <div class="dash-band">
                   <div class="dash-band-labels">
-                    <span>Min ${fmtUSD(minBand)}</span>
-                    <span>Max ${fmtUSD(maxBand)}</span>
+                    <span>${fmtUSD(minBand)}</span>
+                    <span class="v-label">V=${fmtUSD(targetValue)}</span>
+                    <span>${fmtUSD(maxBand)}</span>
                   </div>
                   <div class="dash-band-bar">
-                    <div class="dash-band-fill" style="width:${bandPos}%"></div>
+                    <div class="dash-band-danger-left"></div>
+                    <div class="dash-band-safe"></div>
+                    <div class="dash-band-danger-right"></div>
+                    <div class="dash-band-eval" style="left:${bandPos}%">${fmtUSD(currentEval)}</div>
                     <div class="dash-band-marker" style="left:${bandPos}%"></div>
                   </div>
                 </div>
