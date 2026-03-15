@@ -530,6 +530,7 @@
       currentAccountId = id;
       conditionList = null;
       await load();
+      loadDashboard(); // 계좌 전환 시 대시보드도 갱신
     }
 
     // ==================== Main Render ====================
@@ -1413,15 +1414,20 @@
           fetch('/status/momentumScalp').then(r => r.json()),
         ]);
 
-        const vrArr = vrRes.status === 'fulfilled' ? (Array.isArray(vrRes.value) ? vrRes.value : Object.values(vrRes.value)) : [];
-        const cyclesArr = cyclesRes.status === 'fulfilled' ? (Array.isArray(cyclesRes.value) ? cyclesRes.value : Object.values(cyclesRes.value)) : [];
-        const rdArr = rdRes.status === 'fulfilled' ? (Array.isArray(rdRes.value) ? rdRes.value : Object.values(rdRes.value)) : [];
-        const scalpArr = scalpRes.status === 'fulfilled' ? (Array.isArray(scalpRes.value) ? scalpRes.value : Object.values(scalpRes.value)) : [];
+        const toArr = (v) => Array.isArray(v) ? v : Object.values(v || {});
+        const vrArr = vrRes.status === 'fulfilled' ? toArr(vrRes.value) : [];
+        const cyclesArr = cyclesRes.status === 'fulfilled' ? toArr(cyclesRes.value) : [];
+        const rdArr = rdRes.status === 'fulfilled' ? toArr(rdRes.value) : [];
+        const scalpArr = scalpRes.status === 'fulfilled' ? toArr(scalpRes.value) : [];
 
-        const vrItems = vrArr.filter(v => v && v.ticker);
-        const cycleItems = cyclesArr.filter(c => c && c.ticker);
-        const rdItems = rdArr.filter(r => r && r.status);
-        const scalpItems = scalpArr.filter(s => s && s.status);
+        // 현재 선택된 계좌 기준 필터
+        const acctId = currentAccountId;
+        const matchAcct = (item) => !acctId || item._accountId === acctId || item._accountId === 'default';
+
+        const vrItems = vrArr.filter(v => v && v.ticker && matchAcct(v));
+        const cycleItems = cyclesArr.filter(c => c && c.ticker && matchAcct(c));
+        const rdItems = rdArr.filter(r => r && r.status && matchAcct(r));
+        const scalpItems = scalpArr.filter(s => s && s.status && matchAcct(s));
 
         if (vrItems.length === 0 && cycleItems.length === 0 && rdItems.length === 0 && scalpItems.length === 0) {
           $('dashboard').innerHTML = '';
