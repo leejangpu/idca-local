@@ -9,227 +9,317 @@
       --bg: #0f1117;
       --surface: #1a1d28;
       --surface2: #232734;
+      --surface3: #2a2e3d;
       --border: #2e3345;
+      --border-light: #3a3f52;
       --text: #e1e4ed;
       --text2: #8b90a0;
+      --text3: #626780;
       --accent: #3b82f6;
       --accent-hover: #2563eb;
+      --accent-bg: rgba(59,130,246,0.08);
       --green: #22c55e;
       --green-bg: #0f2a1d;
+      --green-border: #1a4731;
       --red: #ef4444;
       --red-bg: #2a0f0f;
+      --red-border: #4a1a1a;
       --orange: #f59e0b;
-      --radius: 10px;
+      --orange-bg: rgba(245,158,11,0.1);
+      --orange-border: rgba(245,158,11,0.3);
+      --amber: #f59e0b;
+      --teal: #14b8a6;
+      --teal-bg: rgba(20,184,166,0.08);
+      --purple: #a855f7;
+      --purple-bg: rgba(168,85,247,0.08);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --radius-xs: 6px;
+      --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+      --transition: 0.2s ease;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       background: var(--bg); color: var(--text);
-      min-height: 100vh;
+      min-height: 100vh; line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }
 
-    /* Layout */
-    .container { max-width: 720px; margin: 0 auto; padding: 24px 16px 80px; }
-    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
-    header h1 { font-size: 1.3em; font-weight: 700; letter-spacing: -0.02em; }
-    .badge { font-size: 0.7em; padding: 3px 8px; border-radius: 20px; font-weight: 500; }
-    .badge-on { background: var(--green-bg); color: var(--green); }
-    .badge-off { background: var(--red-bg); color: var(--red); }
+    /* ===== Layout ===== */
+    .container { max-width: 640px; margin: 0 auto; padding: 20px 16px 100px; }
 
-    /* Toast */
+    /* ===== Header ===== */
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px; padding: 0 2px;
+    }
+    .header-left { display: flex; align-items: center; gap: 10px; }
+    .header h1 { font-size: 1.2em; font-weight: 700; letter-spacing: -0.03em; }
+    .badge {
+      font-size: 0.68em; padding: 3px 10px; border-radius: 20px;
+      font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .badge-on { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+    .badge-off { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+
+    /* ===== Toast ===== */
     .toast {
-      position: fixed; top: 16px; right: 16px; padding: 12px 20px; border-radius: var(--radius);
-      font-size: 0.85em; font-weight: 500; z-index: 100; opacity: 0;
-      transition: opacity 0.3s, transform 0.3s; transform: translateY(-8px);
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-12px);
+      padding: 10px 24px; border-radius: var(--radius-sm);
+      font-size: 0.82em; font-weight: 600; z-index: 100; opacity: 0;
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none; white-space: nowrap;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
-    .toast.show { opacity: 1; transform: translateY(0); }
-    .toast.success { background: var(--green-bg); color: var(--green); border: 1px solid #1a4731; }
-    .toast.error { background: var(--red-bg); color: var(--red); border: 1px solid #4a1a1a; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.success { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+    .toast.error { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
 
-    /* Section */
-    .section { margin-bottom: 20px; }
-    .section-title {
-      font-size: 0.75em; font-weight: 600; text-transform: uppercase;
-      letter-spacing: 0.08em; color: var(--text2); margin-bottom: 8px; padding-left: 4px;
+    /* ===== Section ===== */
+    .section { margin-bottom: 24px; }
+    .section-label {
+      font-size: 0.72em; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--text3); margin-bottom: 8px; padding-left: 4px;
     }
 
-    /* Card */
+    /* ===== Card ===== */
     .card {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius); overflow: hidden;
+      box-shadow: var(--shadow);
     }
-    .card + .card { margin-top: 8px; }
+    .card + .card { margin-top: 10px; }
+    .card-header {
+      font-size: 0.72em; font-weight: 700; color: var(--accent);
+      letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 12px 16px 6px; background: transparent;
+    }
 
-    /* Row */
+    /* ===== Row ===== */
     .row {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 13px 16px; border-bottom: 1px solid var(--border);
-      min-height: 48px;
+      padding: 12px 16px; border-bottom: 1px solid var(--border);
+      min-height: 48px; gap: 12px;
     }
     .row:last-child { border-bottom: none; }
-    .row-label { font-size: 0.88em; font-weight: 500; }
-    .row-desc { font-size: 0.75em; color: var(--text2); margin-top: 2px; }
     .row-left { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-    .row-right { flex-shrink: 0; margin-left: 12px; }
+    .row-right { flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+    .row-label { font-size: 0.86em; font-weight: 500; color: var(--text); }
+    .row-desc { font-size: 0.73em; color: var(--text2); margin-top: 1px; line-height: 1.4; }
+    .row-suffix { font-size: 0.78em; color: var(--text3); font-weight: 500; white-space: nowrap; }
 
-    /* Toggle */
-    .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; display: inline-block; }
+    /* ===== Toggle ===== */
+    .toggle { position: relative; width: 46px; height: 26px; cursor: pointer; display: inline-block; flex-shrink: 0; }
     .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
     .toggle .track {
-      position: absolute; inset: 0; background: #3a3f50; border-radius: 24px; transition: 0.2s;
+      position: absolute; inset: 0; background: #3a3f50; border-radius: 26px;
+      transition: var(--transition);
     }
     .toggle .track::after {
-      content: ''; position: absolute; width: 18px; height: 18px;
-      left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s;
+      content: ''; position: absolute; width: 20px; height: 20px;
+      left: 3px; top: 3px; background: #fff; border-radius: 50%;
+      transition: var(--transition);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
     }
     .toggle input:checked + .track { background: var(--green); }
     .toggle input:checked + .track::after { transform: translateX(20px); }
 
-    /* Inputs */
+    /* ===== Inputs ===== */
     .input {
       background: var(--surface2); border: 1px solid var(--border); color: var(--text);
-      padding: 7px 10px; border-radius: 6px; font-size: 0.85em; width: 140px;
-      text-align: right; outline: none; transition: border-color 0.2s;
+      padding: 7px 10px; border-radius: var(--radius-xs); font-size: 0.84em;
+      outline: none; transition: border-color var(--transition);
+      font-family: inherit;
     }
-    .input:focus { border-color: var(--accent); }
-    .input-sm { width: 90px; }
-    .input-xs { width: 70px; }
+    .input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+    .input-num { width: 100px; text-align: right; }
+    .input-sm { width: 80px; text-align: right; }
+    .input-text { width: 140px; text-align: left; }
+    .input-wide { width: 100%; text-align: left; }
 
     select.input {
-      text-align: left; appearance: none; cursor: pointer;
+      text-align: left; appearance: none; cursor: pointer; padding-right: 28px;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b90a0' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px;
+      background-repeat: no-repeat; background-position: right 8px center;
     }
 
-    /* Tabs */
-    .tabs { display: flex; gap: 2px; background: var(--surface); border-radius: var(--radius); padding: 3px; margin-bottom: 12px; border: 1px solid var(--border); }
+    /* ===== Tabs ===== */
+    .tabs {
+      display: flex; gap: 2px; background: var(--surface); border-radius: var(--radius);
+      padding: 3px; margin-bottom: 12px; border: 1px solid var(--border);
+    }
     .tab {
-      flex: 1; text-align: center; padding: 8px 0; border-radius: 7px; font-size: 0.85em;
-      font-weight: 500; cursor: pointer; color: var(--text2); transition: 0.2s; border: none; background: none;
+      flex: 1; text-align: center; padding: 9px 0; border-radius: 9px;
+      font-size: 0.84em; font-weight: 600; cursor: pointer; color: var(--text2);
+      transition: var(--transition); border: none; background: none;
+      font-family: inherit;
     }
     .tab.active { background: var(--accent); color: #fff; }
-    .tab:hover:not(.active) { color: var(--text); }
+    .tab:hover:not(.active) { color: var(--text); background: var(--surface2); }
 
-    /* Sub-tabs (strategy detail) */
-    .subtabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+    /* ===== Sub-tabs ===== */
+    .subtabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
     .subtab {
-      padding: 6px 14px; border-radius: 6px; font-size: 0.8em; font-weight: 500;
-      cursor: pointer; color: var(--text2); border: 1px solid var(--border); background: var(--surface); transition: 0.2s;
+      padding: 6px 16px; border-radius: var(--radius-xs); font-size: 0.8em; font-weight: 600;
+      cursor: pointer; color: var(--text2); border: 1px solid var(--border); background: var(--surface);
+      transition: var(--transition); font-family: inherit;
     }
     .subtab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .subtab:hover:not(.active) { border-color: var(--text2); color: var(--text); }
 
-    /* Buttons */
-    .btn {
-      padding: 9px 20px; border-radius: 8px; font-size: 0.85em; font-weight: 600;
-      cursor: pointer; border: none; transition: 0.2s;
+    /* ===== Strategy Checkbox Pills ===== */
+    .strat-pills { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0; }
+    .strat-pill {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 16px; border-radius: var(--radius-sm); font-size: 0.82em; font-weight: 500;
+      cursor: pointer; border: 1.5px solid var(--border); background: var(--surface2);
+      transition: var(--transition); user-select: none; color: var(--text2);
     }
+    .strat-pill:hover { border-color: var(--text2); color: var(--text); }
+    .strat-pill.checked { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+    .strat-pill .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--border); transition: var(--transition); flex-shrink: 0;
+    }
+    .strat-pill.checked .dot { background: var(--accent); box-shadow: 0 0 6px rgba(59,130,246,0.5); }
+
+    /* ===== Strategy Panels (Accordion) ===== */
+    .panel { margin-top: 12px; }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); cursor: pointer; font-size: 0.86em; font-weight: 700;
+      transition: var(--transition);
+    }
+    .panel-header:hover { border-color: var(--accent); }
+    .panel-header .arrow {
+      font-size: 0.7em; color: var(--text3); transition: transform var(--transition);
+    }
+    .panel-header.open .arrow { transform: rotate(180deg); }
+    .panel-body { margin-top: 8px; }
+
+    /* ===== Buttons ===== */
+    .btn {
+      padding: 10px 24px; border-radius: var(--radius-sm); font-size: 0.84em; font-weight: 600;
+      cursor: pointer; border: none; transition: var(--transition); font-family: inherit;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-primary { background: var(--accent); color: #fff; }
-    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
     .btn-danger { background: var(--red); color: #fff; }
-    .btn-sm { padding: 5px 12px; font-size: 0.8em; }
+    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    .btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { border-color: var(--text); color: var(--text); }
+    .btn-sm { padding: 6px 14px; font-size: 0.78em; }
+    .btn-full { width: 100%; }
 
-    .actions { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--border); }
+    .save-bar {
+      display: flex; justify-content: flex-end; padding: 12px 0; gap: 8px;
+    }
+    .save-bar .btn { min-width: 100px; }
 
-    /* Ticker List */
-    .ticker-list { padding: 12px 16px; }
+    /* ===== Ticker List ===== */
+    .ticker-section { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .ticker-section:last-child { border-bottom: none; }
+    .ticker-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .ticker-chip {
       display: inline-flex; align-items: center; gap: 6px;
-      background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
-      padding: 5px 10px; margin: 3px 4px 3px 0; font-size: 0.82em; font-weight: 500;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 20px;
+      padding: 5px 12px; font-size: 0.8em; font-weight: 600;
+      transition: var(--transition);
     }
-    .ticker-chip .remove {
-      cursor: pointer; color: var(--text2); font-size: 1.1em; line-height: 1;
-      transition: color 0.2s;
+    .ticker-chip .x {
+      cursor: pointer; color: var(--text3); font-size: 1em; line-height: 1;
+      width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; transition: var(--transition);
     }
-    .ticker-chip .remove:hover { color: var(--red); }
-    .ticker-add { display: flex; gap: 6px; margin-top: 8px; }
-    .ticker-add .input { width: 100px; text-align: left; }
-
-    /* Group heading inside card */
-    .group-heading {
-      font-size: 0.75em; font-weight: 600; color: var(--accent);
-      text-transform: uppercase; letter-spacing: 0.06em;
-      padding: 10px 16px 4px; border-bottom: none;
+    .ticker-chip .x:hover { color: var(--red); background: var(--red-bg); }
+    .ticker-add {
+      display: flex; gap: 6px; margin-top: 10px; align-items: center;
     }
+    .ticker-add .input { flex: 1; max-width: 140px; text-align: left; }
+    .ticker-empty { font-size: 0.82em; color: var(--text3); padding: 8px 0; }
 
-    /* Empty state */
-    .empty { text-align: center; padding: 40px 20px; color: var(--text2); font-size: 0.9em; }
+    /* ===== Account Bar ===== */
+    .account-bar {
+      display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;
+    }
+    .account-chip {
+      padding: 7px 16px; border-radius: 20px; font-size: 0.82em; font-weight: 600;
+      cursor: pointer; border: 1.5px solid var(--border); background: var(--surface);
+      transition: var(--transition); user-select: none; color: var(--text2);
+    }
+    .account-chip.active {
+      background: var(--accent-bg); color: var(--accent); border-color: var(--accent);
+    }
+    .account-chip:hover:not(.active) { border-color: var(--text2); color: var(--text); }
+    .account-chip-add {
+      padding: 7px 14px; border-radius: 20px; font-size: 0.82em; font-weight: 500;
+      cursor: pointer; border: 1.5px dashed var(--border); background: transparent;
+      color: var(--text3); transition: var(--transition);
+    }
+    .account-chip-add:hover { border-color: var(--accent); color: var(--accent); }
 
-    /* Loading */
-    .loading { text-align: center; padding: 60px; color: var(--text2); }
+    /* ===== Modal ===== */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 200;
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(4px);
+    }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+      width: 90%; max-width: 420px; padding: 28px; position: relative;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    .modal h3 { font-size: 1.05em; font-weight: 700; margin-bottom: 20px; }
+    .modal-field { margin-bottom: 14px; }
+    .modal-field label { display: block; font-size: 0.78em; color: var(--text2); margin-bottom: 5px; font-weight: 500; }
+    .modal-field .input { width: 100%; text-align: left; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 24px; }
+
+    /* ===== Empty / Loading ===== */
+    .empty-state { text-align: center; padding: 48px 20px; color: var(--text3); font-size: 0.88em; }
+    .loading-state { text-align: center; padding: 80px 20px; color: var(--text3); }
     .spinner {
-      width: 24px; height: 24px; border: 3px solid var(--border);
+      width: 28px; height: 28px; border: 3px solid var(--border);
       border-top-color: var(--accent); border-radius: 50%;
-      animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+      animation: spin 0.8s linear infinite; margin: 0 auto 16px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Checkbox group for multi-strategy */
-    .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
-    .checkbox-pill {
-      display: flex; align-items: center; gap: 6px;
-      padding: 6px 14px; border-radius: 8px; font-size: 0.82em; font-weight: 500;
-      cursor: pointer; border: 1px solid var(--border); background: var(--surface2);
-      transition: 0.2s; user-select: none;
-    }
-    .checkbox-pill input { display: none; }
-    .checkbox-pill.checked { background: var(--accent); color: #fff; border-color: var(--accent); }
+    /* ===== Divider ===== */
+    .divider { height: 1px; background: var(--border); margin: 0; }
 
-    /* Strategy detail accordion */
-    .strat-panel { margin-top: 12px; }
-    .strat-panel-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 16px; background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius); cursor: pointer; font-size: 0.85em; font-weight: 600;
-      margin-bottom: 8px;
+    /* ===== Saving overlay ===== */
+    .saving-btn { position: relative; }
+    .saving-btn.loading { pointer-events: none; }
+    .saving-btn.loading::after {
+      content: ''; position: absolute; inset: 0; background: inherit;
+      border-radius: inherit; display: flex; align-items: center; justify-content: center;
     }
-    .strat-panel-header:hover { border-color: var(--accent); }
 
-    /* Account selector */
-    .account-bar {
-      display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;
+    /* ===== Responsive ===== */
+    @media (max-width: 480px) {
+      .container { padding: 16px 12px 80px; }
+      .row { padding: 10px 14px; }
+      .input-num { width: 80px; }
+      .strat-pill { padding: 8px 12px; font-size: 0.78em; }
     }
-    .account-pill {
-      padding: 6px 14px; border-radius: 8px; font-size: 0.82em; font-weight: 500;
-      cursor: pointer; border: 1px solid var(--border); background: var(--surface2);
-      transition: 0.2s; user-select: none;
-    }
-    .account-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-    .account-pill:hover:not(.active) { border-color: var(--text2); }
-    .account-add {
-      padding: 6px 12px; border-radius: 8px; font-size: 0.82em; font-weight: 500;
-      cursor: pointer; border: 1px dashed var(--border); background: transparent;
-      color: var(--text2); transition: 0.2s;
-    }
-    .account-add:hover { border-color: var(--accent); color: var(--accent); }
-
-    /* Modal */
-    .modal-overlay {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .modal {
-      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-      width: 90%; max-width: 420px; padding: 24px; position: relative;
-    }
-    .modal h3 { font-size: 1em; font-weight: 700; margin-bottom: 16px; }
-    .modal-field { margin-bottom: 12px; }
-    .modal-field label { display: block; font-size: 0.8em; color: var(--text2); margin-bottom: 4px; }
-    .modal-field .input { width: 100%; text-align: left; }
-    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
-    .btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
-    .btn-ghost:hover { border-color: var(--text); color: var(--text); }
   </style>
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>IDCA Local</h1>
-      <span id="master-badge" class="badge badge-off">OFF</span>
+    <header class="header">
+      <div class="header-left">
+        <h1>IDCA Local</h1>
+        <span id="master-badge" class="badge badge-off">OFF</span>
+      </div>
     </header>
     <div id="toast" class="toast"></div>
     <div id="modal-root"></div>
-    <div id="app"><div class="loading"><div class="spinner"></div>로딩 중...</div></div>
+    <div id="app"><div class="loading-state"><div class="spinner"></div>Loading...</div></div>
   </div>
 
   <script>
@@ -251,6 +341,7 @@
     function num(v, fallback = 0) { const n = Number(v); return isNaN(n) ? fallback : n; }
     function pct(v) { return v != null ? (v * 100).toFixed(2) : ''; }
     function fromPct(v) { return num(v) / 100; }
+    function esc(s) { return String(s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 
     // ==================== API ====================
     async function loadAccounts() {
@@ -269,8 +360,10 @@
     async function load() {
       await loadAccounts();
       if (!currentAccountId) {
-        $('app').innerHTML = '<div class="empty">등록된 계좌가 없습니다. 계좌를 추가하세요.</div>';
-        renderAccountBar();
+        $('app').innerHTML = `
+          ${renderAccountBar()}
+          <div class="empty-state">등록된 계좌가 없습니다.<br>계좌를 추가하세요.</div>
+        `;
         return;
       }
       const res = await fetch(`${API}/account/${currentAccountId}`);
@@ -284,8 +377,8 @@
       await fetch(`${API}/account/${currentAccountId}/${market}/${strategy}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
     }
 
-    // HTS 조건검색 목록 캐시
-    let conditionList = null; // [{seq, condition_nm, grp_nm}, ...]
+    // HTS condition list cache
+    let conditionList = null;
     let conditionLoading = false;
 
     async function loadConditionList() {
@@ -311,25 +404,27 @@
 
     // ==================== State ====================
     let activeMarket = 'domestic';
-    let activeStrategyTab = null; // 'basic' | 'autoSelect' | 'autoSelectUS' | 'autoSelectCrypto' | 'global' | 'tickers'
+    let activeStrategyTab = null;
 
     // ==================== Account Bar ====================
     function renderAccountBar() {
-      const bar = accounts.map(a =>
-        `<div class="account-pill ${a.id === currentAccountId ? 'active' : ''}" onclick="switchAccount('${a.id}')">${a.nickname || a.id}</div>`
+      const chips = accounts.map(a =>
+        `<div class="account-chip ${a.id === currentAccountId ? 'active' : ''}" onclick="switchAccount('${esc(a.id)}')">${a.nickname || a.id}</div>`
       ).join('');
-      const addBtn = `<div class="account-add" onclick="showAddAccountModal()">+ 추가</div>`;
-      const manageBtn = currentAccountId ? `<div class="account-add" onclick="showEditAccountModal('${currentAccountId}')">설정</div>` : '';
-      return `<div class="account-bar">${bar}${addBtn}${manageBtn}</div>`;
+      const addBtn = `<div class="account-chip-add" onclick="showAddAccountModal()">+ 추가</div>`;
+      const manageBtn = currentAccountId
+        ? `<div class="account-chip-add" onclick="showEditAccountModal('${esc(currentAccountId)}')">설정</div>`
+        : '';
+      return `<div class="account-bar">${chips}${addBtn}${manageBtn}</div>`;
     }
 
     async function switchAccount(id) {
       currentAccountId = id;
-      conditionList = null; // reset condition cache
+      conditionList = null;
       await load();
     }
 
-    // ==================== Render Main ====================
+    // ==================== Main Render ====================
     function render() {
       const t = C.trading || {};
       $('master-badge').textContent = t.tradingEnabled ? 'ON' : 'OFF';
@@ -340,9 +435,10 @@
 
       $('app').innerHTML = `
         ${renderAccountBar()}
+
         <!-- Master Controls -->
         <div class="section">
-          <div class="section-title">기본 설정</div>
+          <div class="section-label">기본 설정</div>
           <div class="card">
             ${toggleRow('전체 매매', '모든 자동매매의 마스터 스위치', t.tradingEnabled, 'onToggleTrading(this)')}
             ${toggleRow('자동 승인', '주문 실행 전 승인 없이 자동 체결', t.autoApprove, 'onToggleAutoApprove(this)')}
@@ -351,12 +447,11 @@
 
         <!-- Market Tabs -->
         <div class="section">
-          <div class="section-title">시장 설정</div>
+          <div class="section-label">시장 설정</div>
           <div class="tabs">
-            <button class="tab ${activeMarket==='domestic'?'active':''}" onclick="switchMarket('domestic')">국내</button>
-            <button class="tab ${activeMarket==='overseas'?'active':''}" onclick="switchMarket('overseas')">해외</button>
+            <button class="tab ${activeMarket==='domestic'?'active':''}" onclick="switchMarket('domestic')">국내 ${dm.enabled ? '(ON)' : '(OFF)'}</button>
+            <button class="tab ${activeMarket==='overseas'?'active':''}" onclick="switchMarket('overseas')">해외 ${ov.enabled ? '(ON)' : '(OFF)'}</button>
           </div>
-
           <div id="market-content">
             ${activeMarket === 'domestic' ? renderDomestic(dm) : renderOverseas(ov)}
           </div>
@@ -364,10 +459,8 @@
 
         <!-- Strategy Details -->
         <div id="strategy-section"></div>
-
       `;
 
-      // 활성 전략별 상세 설정 렌더
       const mc = activeMarket === 'domestic' ? dm : ov;
       const activeStrats = mc.strategies || (mc.strategy ? [mc.strategy] : []);
       if (mc.swingEnabled && !activeStrats.includes('swing')) activeStrats.push('swing');
@@ -377,21 +470,22 @@
     function renderMultiStrategyDetail(market, strategies) {
       const el = $('strategy-section');
       if (!strategies || strategies.length === 0) { el.innerHTML = ''; return; }
-      el.innerHTML = strategies.map(s => {
-        const data = C.strategies?.[market]?.[s];
-        if (!data) return '';
-        const label = STRAT_LABELS[s] || s;
-        const isOpen = openPanels.has(market + ':' + s);
-        return `
-          <div class="strat-panel">
-            <div class="strat-panel-header" onclick="togglePanel('${market}','${s}')">
-              <span>${label}</span>
-              <span style="color:var(--text2)">${isOpen ? '▲' : '▼'}</span>
+      el.innerHTML = `<div class="section-label" style="margin-top:4px">전략 상세 설정</div>` +
+        strategies.map(s => {
+          const data = C.strategies?.[market]?.[s];
+          if (!data) return '';
+          const label = STRAT_LABELS[s] || s;
+          const isOpen = openPanels.has(market + ':' + s);
+          return `
+            <div class="panel">
+              <div class="panel-header ${isOpen ? 'open' : ''}" onclick="togglePanel('${market}','${s}')">
+                <span>${label}</span>
+                <span class="arrow">&#9660;</span>
+              </div>
+              ${isOpen ? `<div class="panel-body">${renderStrategyContent(market, s, data)}</div>` : ''}
             </div>
-            ${isOpen ? `<div>${renderStrategyContent(market, s, data)}</div>` : ''}
-          </div>
-        `;
-      }).join('');
+          `;
+        }).join('');
     }
 
     const openPanels = new Set();
@@ -405,22 +499,28 @@
     }
 
     // ==================== Market Renderers ====================
-    const STRAT_LABELS = { momentumScalp:'모멘텀 스캘핑', realtimeDdsobV2:'실시간 매수매도 v2', realtimeDdsobV2_1:'실시간 매수매도 v2.1', infinite:'무한매수법', vr:'VR 리밸런싱', swing:'스윙' };
+    const STRAT_LABELS = {
+      momentumScalp: '모멘텀 스캘핑',
+      realtimeDdsobV2: '실사오팔 v2',
+      realtimeDdsobV2_1: '실사오팔 v2.1',
+      infinite: '무한매수법',
+      vr: 'VR 리밸런싱',
+      swing: '스윙매매'
+    };
 
     function strategyCheckboxes(market, allOptions, activeList) {
-      return `<div class="row">
-        <div class="row-left"><div class="row-label">전략 선택</div><div class="row-desc">복수 선택 가능</div></div>
-        <div class="row-right">
-          <div class="checkbox-group">
+      return `
+        <div class="row" style="flex-direction:column; align-items:stretch; gap:8px;">
+          <div class="row-label" style="margin-bottom:2px;">전략 선택 <span style="font-weight:400;color:var(--text3);font-size:0.85em">(복수 선택 가능)</span></div>
+          <div class="strat-pills">
             ${allOptions.map(([val, label]) => {
               const checked = activeList.includes(val);
-              return `<div class="checkbox-pill ${checked ? 'checked' : ''}" data-market="${market}" data-strategy="${val}" onclick="handleStratPillClick(this)">
-                ${label}
+              return `<div class="strat-pill ${checked ? 'checked' : ''}" data-market="${market}" data-strategy="${val}" onclick="handleStratPillClick(this)">
+                <span class="dot"></span>${label}
               </div>`;
             }).join('')}
           </div>
-        </div>
-      </div>`;
+        </div>`;
     }
 
     function handleStratPillClick(el) {
@@ -431,23 +531,23 @@
     }
 
     function renderDomestic(mc) {
-      const options = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실시간 매수매도 v2'],['swing','스윙']];
+      const options = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실사오팔 v2'],['swing','스윙매매']];
       const activeList = mc.strategies || (mc.strategy ? [mc.strategy] : []);
       if (mc.swingEnabled && !activeList.includes('swing')) activeList.push('swing');
       return `
         <div class="card">
-          ${toggleRow('국내 시장 활성화', '', mc.enabled, "onToggleMarket('domestic',this)")}
+          ${toggleRow('국내 시장 활성화', '국내 주식 자동매매 On/Off', mc.enabled, "onToggleMarket('domestic',this)")}
           ${strategyCheckboxes('domestic', options, activeList)}
         </div>
       `;
     }
 
     function renderOverseas(mc) {
-      const options = [['infinite','무한매수법'],['vr','VR 리밸런싱'],['realtimeDdsobV2','실시간 매수매도 v2'],['realtimeDdsobV2_1','실시간 매수매도 v2.1']];
+      const options = [['infinite','무한매수법'],['vr','VR 리밸런싱'],['realtimeDdsobV2','실사오팔 v2'],['realtimeDdsobV2_1','실사오팔 v2.1']];
       const activeList = mc.strategies || (mc.strategy ? [mc.strategy] : []);
       return `
         <div class="card">
-          ${toggleRow('해외 시장 활성화', '', mc.enabled, "onToggleMarket('overseas',this)")}
+          ${toggleRow('해외 시장 활성화', '해외 주식 자동매매 On/Off', mc.enabled, "onToggleMarket('overseas',this)")}
           ${strategyCheckboxes('overseas', options, activeList)}
         </div>
       `;
@@ -466,8 +566,8 @@
         const tabs = `
           <div class="subtabs">
             <button class="subtab ${activeStrategyTab==='basic'?'active':''}" onclick="switchStratTab('basic')">기본 설정</button>
-            ${showKR ? `<button class="subtab ${activeStrategyTab==='autoSelect'?'active':''}" onclick="switchStratTab('autoSelect')">자동선정</button>` : ''}
-            ${showUS ? `<button class="subtab ${activeStrategyTab==='autoSelectUS'?'active':''}" onclick="switchStratTab('autoSelectUS')">자동선정</button>` : ''}
+            ${showKR ? `<button class="subtab ${activeStrategyTab==='autoSelect'?'active':''}" onclick="switchStratTab('autoSelect')">자동선정 (국내)</button>` : ''}
+            ${showUS ? `<button class="subtab ${activeStrategyTab==='autoSelectUS'?'active':''}" onclick="switchStratTab('autoSelectUS')">자동선정 (미국)</button>` : ''}
           </div>
         `;
         return tabs + renderRealtimeDdsob(data, market, strategy);
@@ -475,7 +575,6 @@
       return '';
     }
 
-    // legacy wrapper for switchStratTab
     function renderStrategyDetail(market, strategy) {
       const mc = C.trading?.[market] || {};
       const activeStrats = mc.strategies || (mc.strategy ? [mc.strategy] : []);
@@ -488,16 +587,19 @@
       return `
         <div class="card">
           ${toggleRow('활성화', '', d.enabled, `onStratField('${market}','momentumScalp','enabled',this.checked)`)}
-          ${toggleRow('그림자 모드', '실제 주문 없이 시뮬레이션', d.shadowMode, `onStratField('${market}','momentumScalp','shadowMode',this.checked)`)}
-          ${numberRow('슬롯 수', '동시 보유 종목 수', d.slotCount, `onStratFieldNum('${market}','momentumScalp','slotCount',this.value)`)}
-          ${selectRow('배분 모드', [['equal','균등'],['fixed','고정 금액']], d.allocationMode, `onStratField('${market}','momentumScalp','allocationMode',this.value)`)}
-          ${numberRow('고정 금액', '종목당 투자금 (원)', d.fixedAmount, `onStratFieldNum('${market}','momentumScalp','fixedAmount',this.value)`)}
-          ${numberRow('종목당 금액', '레거시 종목당 투자금', d.amountPerStock, `onStratFieldNum('${market}','momentumScalp','amountPerStock',this.value)`)}
-          ${numberRow('최소 주문금액', '원', d.minOrderAmount, `onStratFieldNum('${market}','momentumScalp','minOrderAmount',this.value)`)}
-          ${numberRow('거래량 상위', '종목', d.volumeRankTop, `onStratFieldNum('${market}','momentumScalp','volumeRankTop',this.value)`)}
+          ${toggleRow('쉐도우 모드', '실제 주문 없이 시뮬레이션만', d.shadowMode, `onStratField('${market}','momentumScalp','shadowMode',this.checked)`)}
         </div>
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">HTS 조건검색</div>
+        <div class="card">
+          <div class="card-header">슬롯 설정</div>
+          ${numberRow('슬롯 수', '동시 보유 종목 수', d.slotCount, `onStratFieldNum('${market}','momentumScalp','slotCount',this.value)`, '개')}
+          ${selectRow('배분 모드', [['equal','균등'],['fixed','고정 금액']], d.allocationMode, `onStratField('${market}','momentumScalp','allocationMode',this.value)`)}
+          ${numberRow('고정 금액', '배분 모드가 "고정"일 때', d.fixedAmount, `onStratFieldNum('${market}','momentumScalp','fixedAmount',this.value)`, '원')}
+          ${numberRow('종목당 금액', '레거시 설정', d.amountPerStock, `onStratFieldNum('${market}','momentumScalp','amountPerStock',this.value)`, '원')}
+          ${numberRow('최소 주문금액', '', d.minOrderAmount, `onStratFieldNum('${market}','momentumScalp','minOrderAmount',this.value)`, '원')}
+          ${numberRow('거래량 상위', '종목 필터링', d.volumeRankTop, `onStratFieldNum('${market}','momentumScalp','volumeRankTop',this.value)`, '종목')}
+        </div>
+        <div class="card">
+          <div class="card-header">HTS 조건검색</div>
           ${conditionPickerRow(d.conditionSeq, d.conditionName, `function(el){
             if(!el.value)return;
             var parts=el.value.split('|');
@@ -505,7 +607,7 @@
             onStratField('${market}','momentumScalp','conditionName',parts[1]);
           }`)}
         </div>
-        <div class="actions">
+        <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','momentumScalp')">저장</button>
         </div>
       `;
@@ -516,14 +618,14 @@
       return `
         <div class="card">
           ${toggleRow('활성화', '', d.enabled, `onStratField('${market}','vr','enabled',this.checked)`)}
-          ${textRow('티커', d.ticker, `onStratField('${market}','vr','ticker',this.value)`)}
+          ${textRow('티커', 'ETF 종목코드', d.ticker, `onStratField('${market}','vr','ticker',this.value)`)}
           ${selectRow('투자 모드', [['accumulate','적립식'],['lump','거치식']], d.investmentMode, `onStratField('${market}','vr','investmentMode',this.value)`)}
-          ${numberRow('정기 투자금', 'USD', d.periodicAmount, `onStratFieldNum('${market}','vr','periodicAmount',this.value)`)}
-          ${numberRow('기울기', 'V 공식 기울기', d.gradient, `onStratFieldNum('${market}','vr','gradient',this.value)`)}
-          ${pctRow('밴드 범위', '', d.bandPercent, `onStratFieldPct('${market}','vr','bandPercent',this.value)`)}
+          ${numberRow('정기 투자금', '', d.periodicAmount, `onStratFieldNum('${market}','vr','periodicAmount',this.value)`, '$')}
+          ${numberRow('기울기', 'V 공식 기울기 파라미터', d.gradient, `onStratFieldNum('${market}','vr','gradient',this.value)`)}
+          ${pctRow('밴드 범위', '매매 밴드 폭', d.bandPercent, `onStratFieldPct('${market}','vr','bandPercent',this.value)`)}
           ${selectRow('공식', [['basic','기본']], d.formulaType, `onStratField('${market}','vr','formulaType',this.value)`)}
         </div>
-        <div class="actions">
+        <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','vr')">저장</button>
         </div>
       `;
@@ -533,12 +635,12 @@
     function renderInfinite(d, market) {
       return `
         <div class="card">
-          ${toggleRow('사이클 종료 후 정지', '', d.stopAfterCycleEnd, `onStratField('${market}','infinite','stopAfterCycleEnd',this.checked)`)}
+          ${toggleRow('사이클 종료 후 정지', '현재 사이클 완료 시 매매 중단', d.stopAfterCycleEnd, `onStratField('${market}','infinite','stopAfterCycleEnd',this.checked)`)}
           ${renderTickerList(d.tickers || [], market, 'infinite')}
         </div>
         ${d.autoSelectConfig ? renderAutoSelectSection(d, 'autoSelectConfig', 'autoSelectEnabled', market, 'infinite', '자동선정') : ''}
         ${d.autoSelectConfigUS ? renderAutoSelectSection(d, 'autoSelectConfigUS', 'autoSelectEnabledUS', market, 'infinite', '자동선정 (미국)') : ''}
-        <div class="actions">
+        <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','infinite')">저장</button>
         </div>
       `;
@@ -558,10 +660,10 @@
       // basic
       return `
         <div class="card">
-          ${toggleRow('사이클 종료 후 정지', '', d.stopAfterCycleEnd, `onStratField('${market}','${strategy}','stopAfterCycleEnd',this.checked)`)}
+          ${toggleRow('사이클 종료 후 정지', '현재 사이클 완료 시 매매 중단', d.stopAfterCycleEnd, `onStratField('${market}','${strategy}','stopAfterCycleEnd',this.checked)`)}
           ${renderTickerList(d.tickers || [], market, strategy)}
         </div>
-        <div class="actions">
+        <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${strategy}')">저장</button>
         </div>
       `;
@@ -574,33 +676,35 @@
       const prefix = `${market}','${strategy}`;
       return `
         <div class="card">
-          ${toggleRow(`${regionLabel} 자동선정`, '', enabled, `onStratField('${prefix}','${enabledKey}',this.checked)`)}
-          <div class="group-heading">선정 설정</div>
-          ${selectRow('원금 모드', [['auto','자동'],['manual','수동']], ac.principalMode, `onAutoField('${market}','${strategy}','${configKey}','principalMode',this.value)`)}
-          ${numberRow('종목당 원금', '', ac.principalPerTicker, `onAutoFieldNum('${market}','${strategy}','${configKey}','principalPerTicker',this.value)`)}
-          ${numberRow('종목 수', '', ac.stockCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','stockCount',this.value)`)}
-          ${numberRow('분할 수', '', ac.splitCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','splitCount',this.value)`)}
-          ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','${configKey}','profitPercent',this.value)`)}
-          ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','forceSellCandles',this.value)`)}
-          ${numberRow('캔들 간격 (분)', '', ac.intervalMinutes, `onAutoFieldNum('${market}','${strategy}','${configKey}','intervalMinutes',this.value)`)}
-          ${ac.selectionMode !== undefined ? selectRow('선정 모드', [['mixed','혼합'],['marketCapOnly','시가총액'],['volumeOnly','거래량'],['sideways','조건검색'],['tradingAmount','거래대금']], ac.selectionMode, `onAutoField('${market}','${strategy}','${configKey}','selectionMode',this.value); render()`) : ''}
-          ${ac.maxStockPrice !== undefined ? numberRow('최대 주가', '', ac.maxStockPrice, `onAutoFieldNum('${market}','${strategy}','${configKey}','maxStockPrice',this.value)`) : ''}
-          ${ac.minMarketCap !== undefined ? numberRow('최소 시가총액', '', ac.minMarketCap, `onAutoFieldNum('${market}','${strategy}','${configKey}','minMarketCap',this.value)`) : ''}
+          ${toggleRow(`${regionLabel} 자동선정`, '자동으로 종목을 선정하여 매매', enabled, `onStratField('${prefix}','${enabledKey}',this.checked)`)}
         </div>
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">손절 설정</div>
+        <div class="card">
+          <div class="card-header">선정 설정</div>
+          ${selectRow('원금 모드', [['auto','자동'],['manual','수동']], ac.principalMode, `onAutoField('${market}','${strategy}','${configKey}','principalMode',this.value)`)}
+          ${numberRow('종목당 원금', '', ac.principalPerTicker, `onAutoFieldNum('${market}','${strategy}','${configKey}','principalPerTicker',this.value)`, market === 'domestic' ? '원' : '$')}
+          ${numberRow('종목 수', '', ac.stockCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','stockCount',this.value)`, '종목')}
+          ${numberRow('분할 수', '', ac.splitCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','splitCount',this.value)`, '분할')}
+          ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','${configKey}','profitPercent',this.value)`)}
+          ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','forceSellCandles',this.value)`, '캔들')}
+          ${numberRow('캔들 간격', '', ac.intervalMinutes, `onAutoFieldNum('${market}','${strategy}','${configKey}','intervalMinutes',this.value)`, '분')}
+          ${ac.selectionMode !== undefined ? selectRow('선정 모드', [['mixed','혼합'],['marketCapOnly','시가총액'],['volumeOnly','거래량'],['sideways','조건검색'],['tradingAmount','거래대금']], ac.selectionMode, `onAutoField('${market}','${strategy}','${configKey}','selectionMode',this.value); render()`) : ''}
+          ${ac.maxStockPrice !== undefined ? numberRow('최대 주가', '', ac.maxStockPrice, `onAutoFieldNum('${market}','${strategy}','${configKey}','maxStockPrice',this.value)`, market === 'domestic' ? '원' : '$') : ''}
+          ${ac.minMarketCap !== undefined ? numberRow('최소 시가총액', '', ac.minMarketCap, `onAutoFieldNum('${market}','${strategy}','${configKey}','minMarketCap',this.value)`, '억') : ''}
+        </div>
+        <div class="card">
+          <div class="card-header">손절 설정</div>
           ${toggleRow('자동 손절', '', ac.autoStopLoss, `onAutoField('${market}','${strategy}','${configKey}','autoStopLoss',this.checked)`)}
-          ${numberRow('손절 %', '음수 (예: -5)', ac.stopLossPercent, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossPercent',this.value)`)}
-          ${toggleRow('소진 손절', '', ac.exhaustionStopLoss, `onAutoField('${market}','${strategy}','${configKey}','exhaustionStopLoss',this.checked)`)}
-          ${ac.stopLossMultiplier !== undefined ? numberRow('손절 배수', '', ac.stopLossMultiplier, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossMultiplier',this.value)`) : ''}
-          ${ac.minDropPercent !== undefined ? numberRow('최소 하락 %', '', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','${configKey}','minDropPercent',this.value)`) : ''}
-          ${ac.peakCheckCandles !== undefined ? numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','peakCheckCandles',this.value)`) : ''}
-          ${ac.ascendingSplit !== undefined ? toggleRow('상승 분할', '', ac.ascendingSplit, `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit',this.checked)`) : ''}
+          ${pctRow('손절', '음수 (예: -5%)', ac.stopLossPercent != null ? ac.stopLossPercent / 100 : undefined, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossPercent',num(this.value))`)}
+          ${toggleRow('소진 손절', '분할 소진 시 손절', ac.exhaustionStopLoss, `onAutoField('${market}','${strategy}','${configKey}','exhaustionStopLoss',this.checked)`)}
+          ${ac.stopLossMultiplier !== undefined ? numberRow('손절 배수', '', ac.stopLossMultiplier, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossMultiplier',this.value)`, 'x') : ''}
+          ${ac.minDropPercent !== undefined ? numberRow('최소 하락', '', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','${configKey}','minDropPercent',this.value)`, '%') : ''}
+          ${ac.peakCheckCandles !== undefined ? numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','peakCheckCandles',this.value)`, '캔들') : ''}
+          ${ac.ascendingSplit !== undefined ? toggleRow('상승 분할', '상승 시 분할 매수', ac.ascendingSplit, `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit',this.checked)`) : ''}
           ${ac.spreadFilterEnabled !== undefined ? toggleRow('스프레드 필터', '', ac.spreadFilterEnabled, `onAutoField('${market}','${strategy}','${configKey}','spreadFilterEnabled',this.checked)`) : ''}
         </div>
         ${ac.selectionMode === 'sideways' ? `
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">HTS 조건검색</div>
+        <div class="card">
+          <div class="card-header">HTS 조건검색</div>
           ${conditionPickerRow(ac.conditionSeq || ac.seq, ac.conditionName || ac.condition_nm, `function(el){
             if(!el.value)return;
             var parts=el.value.split('|');
@@ -610,7 +714,7 @@
           }`)}
           ${ac.includeETF !== undefined ? toggleRow('ETF 포함', '', ac.includeETF, `onAutoField('${market}','${strategy}','${configKey}','includeETF',this.checked)`) : ''}
         </div>` : ''}
-        <div class="actions">
+        <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${strategy}')">저장</button>
         </div>
       `;
@@ -622,18 +726,20 @@
       return `
         <div class="card">
           ${toggleRow('코인 자동선정', '', d.autoSelectEnabledCrypto, `onStratField('${market}','${strategy}','autoSelectEnabledCrypto',this.checked)`)}
-          <div class="group-heading">선정 설정</div>
-          ${selectRow('원금 모드', [['auto','자동'],['manual','수동']], ac.principalMode, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','principalMode',this.value)`)}
-          ${numberRow('코인 수', '', ac.coinCount, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','coinCount',this.value)`)}
-          ${numberRow('원금', '', ac.principal, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','principal',this.value)`)}
-          ${numberRow('분할 수', '', ac.splitCount, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','splitCount',this.value)`)}
-          ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','autoSelectConfigCrypto','profitPercent',this.value)`)}
-          ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','forceSellCandles',this.value)`)}
-          ${numberRow('캔들 간격 (분)', '', ac.intervalMinutes, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','intervalMinutes',this.value)`)}
-          ${numberRow('선정 주기 (시간)', '', ac.selectionIntervalHours, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','selectionIntervalHours',this.value)`)}
         </div>
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">필터</div>
+        <div class="card">
+          <div class="card-header">선정 설정</div>
+          ${selectRow('원금 모드', [['auto','자동'],['manual','수동']], ac.principalMode, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','principalMode',this.value)`)}
+          ${numberRow('코인 수', '', ac.coinCount, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','coinCount',this.value)`, '개')}
+          ${numberRow('원금', '', ac.principal, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','principal',this.value)`, '원')}
+          ${numberRow('분할 수', '', ac.splitCount, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','splitCount',this.value)`, '분할')}
+          ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','autoSelectConfigCrypto','profitPercent',this.value)`)}
+          ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','forceSellCandles',this.value)`, '캔들')}
+          ${numberRow('캔들 간격', '', ac.intervalMinutes, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','intervalMinutes',this.value)`, '분')}
+          ${numberRow('선정 주기', '', ac.selectionIntervalHours, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','selectionIntervalHours',this.value)`, '시간')}
+        </div>
+        <div class="card">
+          <div class="card-header">필터</div>
           ${toggleRow('EMA 20 필터', '', ac.ema20Filter, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ema20Filter',this.checked)`)}
           ${toggleRow('EMA 5 필터', '', ac.ema5Filter, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ema5Filter',this.checked)`)}
           ${toggleRow('스테이블코인 제외', '', ac.excludeStablecoins, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','excludeStablecoins',this.checked)`)}
@@ -648,15 +754,15 @@
           ${numberRow('EMA20 이격 최소', '', ac.ema20DisparityMin, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','ema20DisparityMin',this.value)`)}
           ${numberRow('EMA20 이격 최대', '', ac.ema20DisparityMax, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','ema20DisparityMax',this.value)`)}
         </div>
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">손절 / 기타</div>
-          ${numberRow('손절 %', '', ac.stopLossPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','stopLossPercent',this.value)`)}
-          ${numberRow('최소 하락 %', '', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropPercent',this.value)`)}
-          ${numberRow('최소 하락 틱', '', ac.minDropTicks, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropTicks',this.value)`)}
-          ${numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','peakCheckCandles',this.value)`)}
+        <div class="card">
+          <div class="card-header">손절 / 기타</div>
+          ${numberRow('손절', '', ac.stopLossPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','stopLossPercent',this.value)`, '%')}
+          ${numberRow('최소 하락', '', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropPercent',this.value)`, '%')}
+          ${numberRow('최소 하락 틱', '', ac.minDropTicks, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropTicks',this.value)`, '틱')}
+          ${numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','peakCheckCandles',this.value)`, '캔들')}
           ${toggleRow('상승 분할', '', ac.ascendingSplit, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ascendingSplit',this.checked)`)}
         </div>
-        <div class="actions">
+        <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${strategy}')">저장</button>
         </div>
       `;
@@ -665,7 +771,6 @@
     // -- Swing --
     function renderSwing(d, market) {
       const st = (activeStrategyTab === 'global' || activeStrategyTab === 'tickers') ? activeStrategyTab : 'global';
-      const hasTickers = d.tickers && d.tickers.length > 0;
       return `
         <div class="subtabs">
           <button class="subtab ${st==='global'?'active':''}" onclick="activeStrategyTab='global';renderStrategyDetail('${market}','swing')">글로벌 설정</button>
@@ -678,28 +783,28 @@
     function renderSwingGlobal(d, market) {
       return `
         <div class="card">
-          ${toggleRow('쉐도우 모드', '실제 주문 없이 로그만 기록 (시뮬레이션)', d.shadowMode, `onStratField('${market}','swing','shadowMode',this.checked)`)}
+          ${toggleRow('쉐도우 모드', '실제 주문 없이 로그만 기록', d.shadowMode, `onStratField('${market}','swing','shadowMode',this.checked)`)}
         </div>
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">투자 한도</div>
-          ${numberRow('총 투자금', '스윙 전체 투자 한도 (원)', d.globalPrincipal, `onStratFieldNum('${market}','swing','globalPrincipal',this.value)`)}
-          ${numberRow('최대 포지션 수', '동시 보유 종목 수', d.maxPositions, `onStratFieldNum('${market}','swing','maxPositions',this.value)`)}
+        <div class="card">
+          <div class="card-header">투자 한도</div>
+          ${numberRow('총 투자금', '스윙 전체 투자 한도', d.globalPrincipal, `onStratFieldNum('${market}','swing','globalPrincipal',this.value)`, '원')}
+          ${numberRow('최대 포지션 수', '동시 보유 종목 수', d.maxPositions, `onStratFieldNum('${market}','swing','maxPositions',this.value)`, '종목')}
         </div>
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">기본 익절 / 손절</div>
-          ${pctRow('익절 목표', '기본 목표 수익률', d.defaultProfitPercent, `onStratFieldPct('${market}','swing','defaultProfitPercent',this.value)`)}
-          ${pctRow('손절 라인', '기본 손절 비율 (음수)', d.defaultStopLossPercent, `onStratFieldPct('${market}','swing','defaultStopLossPercent',this.value)`)}
+        <div class="card">
+          <div class="card-header">익절 / 손절</div>
+          ${pctRow('기본 익절 목표', '', d.defaultProfitPercent, `onStratFieldPct('${market}','swing','defaultProfitPercent',this.value)`)}
+          ${pctRow('기본 손절 라인', '음수', d.defaultStopLossPercent, `onStratFieldPct('${market}','swing','defaultStopLossPercent',this.value)`)}
         </div>
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">트레일링 스톱</div>
+        <div class="card">
+          <div class="card-header">트레일링 스톱</div>
           ${toggleRow('트레일링 스톱', 'ATR 기반 동적 손절선', d.trailingStopEnabled, `onStratField('${market}','swing','trailingStopEnabled',this.checked)`)}
           ${pctRow('트레일링 비율', '고점 대비 하락 허용', d.trailingStopPercent, `onStratFieldPct('${market}','swing','trailingStopPercent',this.value)`)}
         </div>
-        <div class="card" style="margin-top:8px">
-          <div class="group-heading">보유 기간</div>
-          ${numberRow('최대 보유일', '일', d.maxHoldingDays, `onStratFieldNum('${market}','swing','maxHoldingDays',this.value)`)}
+        <div class="card">
+          <div class="card-header">보유 기간</div>
+          ${numberRow('최대 보유일', '', d.maxHoldingDays, `onStratFieldNum('${market}','swing','maxHoldingDays',this.value)`, '일')}
         </div>
-        <div class="actions">
+        <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','swing')">저장</button>
         </div>
       `;
@@ -708,48 +813,51 @@
     function renderSwingTickers(d, market) {
       const tickers = d.tickers || [];
       const tickerCards = tickers.map((t, i) => `
-        <div class="card" style="margin-top:${i > 0 ? '8px' : '0'}">
+        <div class="card" style="margin-top:${i > 0 ? '10px' : '0'}">
           <div class="row">
             <div class="row-left">
-              <div class="row-label" style="font-weight:700">${t.ticker} ${t.stockName ? '— ' + t.stockName : ''}</div>
+              <div class="row-label" style="font-weight:700;font-size:0.92em">${t.ticker} ${t.stockName ? '<span style="color:var(--text2);font-weight:400">- ' + t.stockName + '</span>' : ''}</div>
               ${t.memo ? `<div class="row-desc">${t.memo}</div>` : ''}
             </div>
             <div class="row-right">
               <button class="btn btn-danger btn-sm" onclick="removeSwingTicker(${i})">삭제</button>
             </div>
           </div>
-          ${numberRow('투자금', '원', t.principal, `onSwingTickerField(${i},'principal',num(this.value))`)}
-          ${pctRow('익절 %', '', t.profitPercent, `onSwingTickerField(${i},'profitPercent',fromPct(this.value))`)}
-          ${pctRow('손절 %', '음수', t.stopLossPercent, `onSwingTickerField(${i},'stopLossPercent',fromPct(this.value))`)}
-          ${t.trailingStopPercent !== undefined ? pctRow('트레일링 %', '개별 설정', t.trailingStopPercent, `onSwingTickerField(${i},'trailingStopPercent',fromPct(this.value))`) : ''}
-          ${numberRow('추가매수 횟수', '최대', t.maxAdditionalBuys, `onSwingTickerField(${i},'maxAdditionalBuys',num(this.value))`)}
-          ${pctRow('추가매수 하락 %', '진입가 대비', t.additionalBuyDropPercent, `onSwingTickerField(${i},'additionalBuyDropPercent',fromPct(this.value))`)}
+          ${numberRow('투자금', '', t.principal, `onSwingTickerField(${i},'principal',num(this.value))`, '원')}
+          ${pctRow('익절', '', t.profitPercent, `onSwingTickerField(${i},'profitPercent',fromPct(this.value))`)}
+          ${pctRow('손절', '음수', t.stopLossPercent, `onSwingTickerField(${i},'stopLossPercent',fromPct(this.value))`)}
+          ${t.trailingStopPercent !== undefined ? pctRow('트레일링', '개별 설정', t.trailingStopPercent, `onSwingTickerField(${i},'trailingStopPercent',fromPct(this.value))`) : ''}
+          ${numberRow('추가매수 횟수', '', t.maxAdditionalBuys, `onSwingTickerField(${i},'maxAdditionalBuys',num(this.value))`, '회')}
+          ${pctRow('추가매수 하락', '진입가 대비', t.additionalBuyDropPercent, `onSwingTickerField(${i},'additionalBuyDropPercent',fromPct(this.value))`)}
           ${selectRow('진입 전략', [['ema_pullback','EMA 풀백'],['ema_breakout','EMA 돌파'],['rsi_oversold','RSI 과매도']], t.entryStrategy, `onSwingTickerField(${i},'entryStrategy',this.value)`)}
-          ${textRow('메모', t.memo, `onSwingTickerField(${i},'memo',this.value)`)}
+          ${textRow('메모', '', t.memo, `onSwingTickerField(${i},'memo',this.value)`)}
         </div>
       `).join('');
 
       return `
-        ${tickers.length === 0 ? '<div class="empty">등록된 종목이 없습니다</div>' : tickerCards}
+        ${tickers.length === 0 ? '<div class="empty-state" style="padding:24px">등록된 종목이 없습니다</div>' : tickerCards}
         <div class="card" style="margin-top:12px">
-          <div class="group-heading">종목 추가</div>
+          <div class="card-header">종목 추가</div>
           <div class="row">
             <div class="row-left"><div class="row-label">티커</div></div>
-            <div class="row-right"><input class="input" type="text" id="swing-new-ticker" placeholder="005930"></div>
+            <div class="row-right"><input class="input input-text" type="text" id="swing-new-ticker" placeholder="005930"></div>
           </div>
           <div class="row">
             <div class="row-left"><div class="row-label">종목명</div></div>
-            <div class="row-right"><input class="input" type="text" id="swing-new-name" placeholder="삼성전자"></div>
+            <div class="row-right"><input class="input input-text" type="text" id="swing-new-name" placeholder="삼성전자"></div>
           </div>
           <div class="row">
             <div class="row-left"><div class="row-label">투자금</div></div>
-            <div class="row-right"><input class="input input-sm" type="number" id="swing-new-principal" value="1000000"></div>
+            <div class="row-right">
+              <input class="input input-num" type="number" id="swing-new-principal" value="1000000">
+              <span class="row-suffix">원</span>
+            </div>
           </div>
-          <div class="actions">
-            <button class="btn btn-primary" onclick="addSwingTicker()">종목 추가</button>
+          <div style="padding:12px 16px; display:flex; justify-content:flex-end">
+            <button class="btn btn-primary btn-sm" onclick="addSwingTicker()">종목 추가</button>
           </div>
         </div>
-        <div class="actions">
+        <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','swing')">전체 저장</button>
         </div>
       `;
@@ -777,14 +885,13 @@
       if (!ticker) { toast('티커를 입력하세요', 'error'); return; }
 
       const s = getStrat('domestic', 'swing');
-      const d = s;
       if (!s.tickers) s.tickers = [];
       s.tickers.push({
         ticker,
         stockName: stockName || ticker,
         principal,
-        profitPercent: d.defaultProfitPercent || 0.03,
-        stopLossPercent: d.defaultStopLossPercent || -0.02,
+        profitPercent: s.defaultProfitPercent || 0.03,
+        stopLossPercent: s.defaultStopLossPercent || -0.02,
         maxAdditionalBuys: 2,
         additionalBuyDropPercent: -0.03,
         entryStrategy: 'ema_pullback',
@@ -797,15 +904,14 @@
     // ==================== Condition Picker ====================
     function conditionPickerRow(currentSeq, currentName, onSelectCb) {
       const id = 'cond-picker-' + Math.random().toString(36).slice(2, 8);
-      const displayText = currentName && currentSeq ? `${currentName} (#${currentSeq})` : '선택 안 함';
       return `
         <div class="row">
           <div class="row-left">
             <div class="row-label">HTS 조건검색</div>
-            <div class="row-desc">한투 API에서 조건 목록을 불러옵니다</div>
+            <div class="row-desc">한투 API에서 조건 목록을 조회합니다</div>
           </div>
-          <div class="row-right" style="display:flex;align-items:center;gap:6px">
-            <select class="input" id="${id}" onchange="(${onSelectCb})(this)" style="width:200px">
+          <div class="row-right" style="gap:6px">
+            <select class="input" id="${id}" onchange="(${onSelectCb})(this)" style="width:180px">
               <option value="">${currentName ? currentName + ' (#' + currentSeq + ')' : '선택 안 함'}</option>
             </select>
             <button class="btn btn-sm btn-primary" onclick="openConditionPicker('${id}','${currentSeq||''}')">조회</button>
@@ -824,7 +930,7 @@
         return;
       }
       sel.innerHTML = '<option value="">선택하세요</option>' +
-        list.map(c => `<option value="${c.seq}|${c.condition_nm}" ${c.seq === currentSeq ? 'selected' : ''}>${c.condition_nm} (#${c.seq})${c.grp_nm ? ' — ' + c.grp_nm : ''}</option>`).join('');
+        list.map(c => `<option value="${c.seq}|${c.condition_nm}" ${c.seq === currentSeq ? 'selected' : ''}>${c.condition_nm} (#${c.seq})${c.grp_nm ? ' - ' + c.grp_nm : ''}</option>`).join('');
     }
 
     // ==================== Row Builders ====================
@@ -840,7 +946,8 @@
           </div>
         </div>`;
     }
-    function numberRow(label, desc, value, onchange) {
+
+    function numberRow(label, desc, value, onchange, suffix) {
       return `
         <div class="row">
           <div class="row-left">
@@ -848,10 +955,12 @@
             ${desc ? `<div class="row-desc">${desc}</div>` : ''}
           </div>
           <div class="row-right">
-            <input class="input input-sm" type="number" value="${fmt(value)}" onchange="${onchange}">
+            <input class="input input-num" type="number" value="${fmt(value)}" onchange="${onchange}">
+            ${suffix ? `<span class="row-suffix">${suffix}</span>` : ''}
           </div>
         </div>`;
     }
+
     function pctRow(label, desc, value, onchange) {
       return `
         <div class="row">
@@ -860,50 +969,71 @@
             ${desc ? `<div class="row-desc">${desc}</div>` : ''}
           </div>
           <div class="row-right">
-            <div style="display:flex;align-items:center;gap:4px">
-              <input class="input input-xs" type="number" step="0.01" value="${pct(value)}" onchange="${onchange}">
-              <span style="color:var(--text2);font-size:0.85em">%</span>
-            </div>
+            <input class="input input-sm" type="number" step="0.01" value="${pct(value)}" onchange="${onchange}">
+            <span class="row-suffix">%</span>
           </div>
         </div>`;
     }
-    function textRow(label, value, onchange) {
+
+    function textRow(label, desc, value, onchange) {
       return `
         <div class="row">
-          <div class="row-left"><div class="row-label">${label}</div></div>
+          <div class="row-left">
+            <div class="row-label">${label}</div>
+            ${desc ? `<div class="row-desc">${desc}</div>` : ''}
+          </div>
           <div class="row-right">
-            <input class="input" type="text" value="${fmt(value)}" onchange="${onchange}">
+            <input class="input input-text" type="text" value="${fmt(value)}" onchange="${onchange}">
           </div>
         </div>`;
     }
+
     function selectRow(label, options, current, onchange) {
       return `
         <div class="row">
           <div class="row-left"><div class="row-label">${label}</div></div>
           <div class="row-right">
-            <select class="input" onchange="${onchange}">
+            <select class="input" onchange="${onchange}" style="width:140px">
               <option value="">선택 안 함</option>
               ${options.map(([v,l]) => `<option value="${v}" ${current===v?'selected':''}>${l}</option>`).join('')}
             </select>
           </div>
         </div>`;
     }
+
     function renderTickerList(tickers, market, strategy) {
       const chips = (tickers || []).map((t, i) => {
-        if (typeof t === 'object') {
-          return `<span class="ticker-chip">${t.ticker || t.stockName || JSON.stringify(t).slice(0,20)} <span class="remove" onclick="removeTicker('${market}','${strategy}',${i})">&times;</span></span>`;
-        }
-        return `<span class="ticker-chip">${t} <span class="remove" onclick="removeTicker('${market}','${strategy}',${i})">&times;</span></span>`;
+        const display = typeof t === 'object'
+          ? (t.ticker || t.stockName || JSON.stringify(t).slice(0, 20))
+          : t;
+        return `<span class="ticker-chip">${display}<span class="x" onclick="removeTicker('${market}','${strategy}',${i})">&times;</span></span>`;
       }).join('');
       return `
-        <div class="ticker-list">
-          <div class="row-label" style="margin-bottom:6px">티커 목록</div>
-          <div>${chips || '<span style="color:var(--text2);font-size:0.85em">등록된 티커 없음</span>'}</div>
+        <div class="ticker-section">
+          <div class="row-label">티커 목록</div>
+          <div class="ticker-chips">
+            ${chips || '<span class="ticker-empty">등록된 티커 없음</span>'}
+          </div>
           <div class="ticker-add">
-            <input class="input" type="text" id="new-ticker-${market}-${strategy}" placeholder="티커 입력">
+            <input class="input" type="text" id="new-ticker-${market}-${strategy}" placeholder="티커 입력" style="width:120px;text-align:left">
             <button class="btn btn-primary btn-sm" onclick="addTicker('${market}','${strategy}')">추가</button>
           </div>
         </div>`;
+    }
+
+    // ==================== AutoSelect Section (for infinite) ====================
+    function renderAutoSelectSection(d, configKey, enabledKey, market, strategy, sectionLabel) {
+      const ac = d[configKey] || {};
+      const enabled = d[enabledKey];
+      return `
+        <div class="card">
+          <div class="card-header">${sectionLabel}</div>
+          ${toggleRow(`${sectionLabel} 활성화`, '', enabled, `onStratField('${market}','${strategy}','${enabledKey}',this.checked)`)}
+          ${selectRow('원금 모드', [['auto','자동'],['manual','수동']], ac.principalMode, `onAutoField('${market}','${strategy}','${configKey}','principalMode',this.value)`)}
+          ${numberRow('종목당 원금', '', ac.principalPerTicker, `onAutoFieldNum('${market}','${strategy}','${configKey}','principalPerTicker',this.value)`, '$')}
+          ${numberRow('종목 수', '', ac.stockCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','stockCount',this.value)`, '종목')}
+        </div>
+      `;
     }
 
     // ==================== Actions ====================
@@ -937,12 +1067,10 @@
         mc.strategies = mc.strategies.filter(s => s !== strategy);
       }
 
-      // 레거시 필드 동기화
       mc.strategy = mc.strategies[0] || null;
       if (market === 'domestic') mc.swingEnabled = mc.strategies.includes('swing');
 
       await saveTrading(C.trading);
-      // 전체 리렌더 (pill 상태 + 패널)
       render();
       toast(`${STRAT_LABELS[strategy] || strategy} ${checked ? 'ON' : 'OFF'}`);
     }
@@ -959,7 +1087,7 @@
       if (mc.strategy) renderStrategyDetail(activeMarket, mc.strategy);
     }
 
-    // Strategy field updaters (in-memory only, saved on "저장" click)
+    // Strategy field updaters
     function getStrat(market, strategy) {
       if (!C.strategies) C.strategies = {};
       if (!C.strategies[market]) C.strategies[market] = {};
@@ -987,11 +1115,15 @@
 
     async function doSaveStrategy(market, strategy) {
       const data = getStrat(market, strategy);
+      const btn = event?.target;
+      if (btn) { btn.textContent = '저장 중...'; btn.disabled = true; }
       try {
         await saveStrategy(market, strategy, data);
         toast('저장 완료');
       } catch (e) {
         toast('저장 실패: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.textContent = '저장'; btn.disabled = false; }
       }
     }
 
@@ -1081,12 +1213,11 @@
     function showEditAccountModal(accountId) {
       const acct = accounts.find(a => a.id === accountId);
       if (!acct) return;
-      // Load credentials
       fetch(`${API_ACCOUNTS}/${accountId}/credentials`).then(r => r.json()).then(creds => {
         $('modal-root').innerHTML = `
           <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
             <div class="modal">
-              <h3>계좌 설정 — ${acct.nickname || acct.id}</h3>
+              <h3>계좌 설정 - ${acct.nickname || acct.id}</h3>
               <div class="modal-field">
                 <label>별명</label>
                 <input class="input" id="m-nick" value="${acct.nickname || ''}">
