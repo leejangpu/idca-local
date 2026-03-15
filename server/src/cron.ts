@@ -10,6 +10,7 @@ import { runDailyTrading } from './runners/trading';
 import { runMorningSnapshot } from './runners/morning';
 import { runRealtimeV2KR, runRealtimeV2US } from './runners/realtimeV2';
 import { runSwingTradingLoop, runEodSetupScan, submitPendingOrders, checkPendingFills, cancelUnfilledOrders } from './runners/swingTrading';
+import { runMonthlyMaCrossover } from './runners/monthlyMaCrossover';
 import { getEnabledAccounts, AccountContext } from './lib/accountContext';
 import type { SwingConfig } from './lib/swingCalculator';
 
@@ -107,6 +108,13 @@ export function registerAllCrons(): void {
       const shadow = ctx.store.getStrategyConfig<SwingConfig>('domestic', 'swing')?.shadowMode !== false;
       await cancelUnfilledOrders(shadow, ctx);
     });
+  });
+
+  // ==================== 월간 리포트 ====================
+
+  // 월봉 10이평 돌파 스크리닝 — 매일 KST 16:00 실행, 러너 내부에서 마지막 영업일 체크
+  cron.schedule('0 7 * * 1-5', () => {
+    forEachAccount('MonthlyMA', ctx => runMonthlyMaCrossover(ctx));
   });
 
   console.log('[Cron] 스케줄러 등록 완료 (멀티 계좌 지원)');

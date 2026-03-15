@@ -1821,7 +1821,8 @@ export class KisApiClient {
   async getDomesticMarketCapRanking(
     appKey: string,
     appSecret: string,
-    accessToken: string
+    accessToken: string,
+    options?: { priceMin?: string; priceMax?: string }
   ): Promise<MarketCapRankingResponse> {
     const maxRetries = 3;
     let lastError: Error | null = null;
@@ -1842,8 +1843,8 @@ export class KisApiClient {
               fid_input_iscd: '0000',
               fid_trgt_cls_code: '0',
               fid_trgt_exls_cls_code: '0',
-              fid_input_price_1: '',
-              fid_input_price_2: '',
+              fid_input_price_1: options?.priceMin ?? '',
+              fid_input_price_2: options?.priceMax ?? '',
               fid_vol_cnt: '',
             }),
           {
