@@ -11,7 +11,9 @@
 import { config } from '../config';
 import * as localStore from '../lib/localStore';
 import { KisApiClient, DomesticDailyBarResponse, DomesticIndexPriceResponse, DomesticIndexDailyPriceResponse, DomesticHolidayResponse, getOrRefreshToken } from '../lib/kisApi';
-import { getCommonConfig, getMarketStrategyConfig } from '../lib/configHelper';
+import { getCommonConfig, getMarketStrategyConfig, isMarketStrategyActive } from '../lib/configHelper';
+import { AccountContext } from '../lib/accountContext';
+import { getOccupiedTickersExcluding } from '../lib/activeTickerRegistry';
 import { getKoreanTickSize, roundToKoreanTickCeil } from '../lib/marketUtils';
 import { sendTelegramMessage, getUserTelegramChatId } from '../lib/telegram';
 import {
@@ -379,15 +381,14 @@ async function sendSwingNotification(
  * 스윙매매 메인 루프 (60초마다 호출)
  * @returns 처리된 종목 수
  */
-export async function runSwingTradingLoop(): Promise<number> {
-  const userId = config.userId;
-  const accountId = config.accountId;
+export async function runSwingTradingLoop(ctx?: AccountContext): Promise<number> {
+  const accountId = ctx?.accountId ?? config.accountId;
 
   try {
-    const processed = await processSwingAccount();
+    const processed = await processSwingAccount(ctx);
     return processed;
   } catch (err) {
-    console.error(`[Swing] ${userId}/${accountId} 에러:`, (err as Error).message);
+    console.error(`[Swing] ${accountId} 에러:`, (err as Error).message);
     return 0;
   }
 }
@@ -395,28 +396,29 @@ export async function runSwingTradingLoop(): Promise<number> {
 /**
  * 계좌별 스윙매매 처리
  */
-async function processSwingAccount(): Promise<number> {
+async function processSwingAccount(ctx?: AccountContext): Promise<number> {
   // 1. CommonConfig 확인 — swingEnabled 체크
   const commonConfig = getCommonConfig();
-  if (!commonConfig?.tradingEnabled || !commonConfig.domestic?.swingEnabled) {
+  if (!commonConfig || !isMarketStrategyActive(commonConfig, 'domestic', 'swing')) {
     return 0;
   }
 
   // 2. 스윙 config 읽기
-  const swingConfig = getMarketStrategyConfig<SwingConfig>('domestic', 'swing');
+  const swingConfig = ctx
+    ? ctx.store.getStrategyConfig<SwingConfig>('domestic', 'swing')
+    : getMarketStrategyConfig<SwingConfig>('domestic', 'swing');
   if (!swingConfig || swingConfig.tickers.length === 0) {
     return 0;
   }
 
   // 3. KIS 인증 (config에서 자격증명 읽기)
-  const credentials = {
-    appKey: config.kis.appKey,
-    appSecret: config.kis.appSecret,
-    accountNo: config.kis.accountNo,
-  };
+  const credentials = ctx
+    ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
+    : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-  const accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountId = ctx?.accountId ?? config.accountId;
+  const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 
   // 3-1. 휴장일 체크
   const marketOpen = await isMarketOpen(kisClient, credentials.appKey, credentials.appSecret, accessToken);
@@ -1052,31 +1054,33 @@ async function refreshSwingUniverse(
  * 전일 장마감 후 일봉 기반 setup 계산.
  * shouldBuy + LIMIT plan이 나오면 pendingOrders에 저장.
  */
-export async function runEodSetupScan(): Promise<number> {
+export async function runEodSetupScan(ctx?: AccountContext): Promise<number> {
   try {
-    const count = await processEodScan();
+    const count = await processEodScan(ctx);
     return count;
   } catch (err) {
-    console.error(`[Swing:EOD] ${config.userId}/${config.accountId} 에러:`, (err as Error).message);
+    const accountId = ctx?.accountId ?? config.accountId;
+    console.error(`[Swing:EOD] ${accountId} 에러:`, (err as Error).message);
     return 0;
   }
 }
 
-async function processEodScan(): Promise<number> {
+async function processEodScan(ctx?: AccountContext): Promise<number> {
   const commonConfig = getCommonConfig();
   if (!commonConfig?.tradingEnabled || !commonConfig.domestic?.swingEnabled) return 0;
 
-  const swingConfig = getMarketStrategyConfig<SwingConfig>('domestic', 'swing');
+  const swingConfig = ctx
+    ? ctx.store.getStrategyConfig<SwingConfig>('domestic', 'swing')
+    : getMarketStrategyConfig<SwingConfig>('domestic', 'swing');
   if (!swingConfig) return 0;
 
-  const credentials = {
-    appKey: config.kis.appKey,
-    appSecret: config.kis.appSecret,
-    accountNo: config.kis.accountNo,
-  };
+  const credentials = ctx
+    ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
+    : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-  const accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountId = ctx?.accountId ?? config.accountId;
+  const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 
   const stateMap = getAllSwingStates<SwingState>();
   const holdingTickersSet = new Set<string>();
@@ -1123,6 +1127,13 @@ async function processEodScan(): Promise<number> {
     const state = stateMap.get(ticker);
     if (state && (state.status === 'holding' || state.status === 'trailing')) {
       universeLog.push({ ticker, stockName: tickerConfig.stockName, source, skipReason: 'holding' });
+      continue;
+    }
+
+    // 다른 전략이 점유 중이면 스킵
+    const crossStrategyOccupied = getOccupiedTickersExcluding('domestic', 'swing');
+    if (crossStrategyOccupied.has(ticker)) {
+      universeLog.push({ ticker, stockName: tickerConfig.stockName, source, skipReason: 'occupied_by_other_strategy' });
       continue;
     }
 
@@ -1268,7 +1279,7 @@ async function processEodScan(): Promise<number> {
  * pending orders에 대해 LIMIT 주문 제출.
  * shadow mode: 주문 제출 없이 로그만 기록.
  */
-export async function submitPendingOrders(shadow: boolean = true): Promise<number> {
+export async function submitPendingOrders(shadow: boolean = true, ctx?: AccountContext): Promise<number> {
   const pending = getPendingOrders();
   if (pending.length === 0) return 0;
 
@@ -1284,16 +1295,17 @@ export async function submitPendingOrders(shadow: boolean = true): Promise<numbe
   }
 
   // 실전 모드: KIS API로 실제 주문 제출
-  const credentials = {
-    appKey: config.kis.appKey,
-    appSecret: config.kis.appSecret,
-    accountNo: config.kis.accountNo,
-  };
+  const credentials = ctx
+    ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
+    : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-  const accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountId = ctx?.accountId ?? config.accountId;
+  const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 
-  const swingConfig = getMarketStrategyConfig<SwingConfig>('domestic', 'swing');
+  const swingConfig = ctx
+    ? ctx.store.getStrategyConfig<SwingConfig>('domestic', 'swing')
+    : getMarketStrategyConfig<SwingConfig>('domestic', 'swing');
   if (!swingConfig) return 0;
 
   for (const order of pending) {
@@ -1334,18 +1346,17 @@ export async function submitPendingOrders(shadow: boolean = true): Promise<numbe
  * pending orders의 체결 여부를 현재가로 확인.
  * shadow mode: 현재가의 low/open으로 가상 체결 판정.
  */
-export async function checkPendingFills(shadow: boolean = true): Promise<number> {
+export async function checkPendingFills(shadow: boolean = true, ctx?: AccountContext): Promise<number> {
   const pending = getPendingOrders();
   if (pending.length === 0) return 0;
 
-  const credentials = {
-    appKey: config.kis.appKey,
-    appSecret: config.kis.appSecret,
-    accountNo: config.kis.accountNo,
-  };
+  const credentials = ctx
+    ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
+    : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-  const accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountId = ctx?.accountId ?? config.accountId;
+  const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 
   let fillCount = 0;
   const today = getTodayKST();
@@ -1408,7 +1419,7 @@ export async function checkPendingFills(shadow: boolean = true): Promise<number>
  *
  * 미체결 pending orders 취소 + 로그.
  */
-export async function cancelUnfilledOrders(shadow: boolean = true): Promise<number> {
+export async function cancelUnfilledOrders(shadow: boolean = true, ctx?: AccountContext): Promise<number> {
   const pending = getPendingOrders();
   if (pending.length === 0) return 0;
 

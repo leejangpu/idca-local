@@ -1,6 +1,9 @@
 /**
  * 환경 설정 로더
  * .env 파일에서 모든 설정을 읽어옴
+ *
+ * KIS 자격증명은 계좌별로 data/accounts/{id}/credentials/main.json에 저장.
+ * .env의 KIS_* 변수는 마이그레이션 호환용으로만 유지 (optional).
  */
 
 import * as dotenv from 'dotenv';
@@ -22,12 +25,12 @@ function optionalEnv(key: string, defaultValue: string): string {
 }
 
 export const config = {
-  // KIS API
+  // KIS API (레거시 호환 — 계좌 마이그레이션 전까지 사용)
   kis: {
-    appKey: requireEnv('KIS_APP_KEY'),
-    appSecret: requireEnv('KIS_APP_SECRET'),
-    accountNo: requireEnv('KIS_ACCOUNT_NO'),
-    htsUserId: requireEnv('KIS_HTS_USER_ID'),
+    appKey: optionalEnv('KIS_APP_KEY', ''),
+    appSecret: optionalEnv('KIS_APP_SECRET', ''),
+    accountNo: optionalEnv('KIS_ACCOUNT_NO', ''),
+    htsUserId: optionalEnv('KIS_HTS_USER_ID', ''),
     paperTrading: optionalEnv('KIS_PAPER_TRADING', 'false') === 'true',
   },
 
@@ -40,7 +43,7 @@ export const config = {
   // Server
   port: parseInt(optionalEnv('PORT', '3001'), 10),
 
-  // 단일 사용자 (Firestore 경로 대체)
+  // 단일 사용자 (레거시 호환)
   userId: optionalEnv('USER_ID', 'default_user'),
   accountId: optionalEnv('ACCOUNT_ID', 'default_account'),
 

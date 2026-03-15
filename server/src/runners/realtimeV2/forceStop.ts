@@ -6,6 +6,7 @@
 import { config } from '../../config';
 import * as localStore from '../../lib/localStore';
 import { KisApiClient, getOrRefreshToken, isTokenExpiredError } from '../../lib/kisApi';
+import { AccountContext } from '../../lib/accountContext';
 import {
   getMarketStrategyConfig,
   setMarketStrategyConfig,
@@ -20,7 +21,13 @@ import {
 
 // ==================== 자격증명 헬퍼 ====================
 
-function getCredentialsAndClient(): { credentials: { appKey: string; appSecret: string; accountNo: string }; kisClient: KisApiClient } {
+function getCredentialsAndClient(ctx?: AccountContext): { credentials: { appKey: string; appSecret: string; accountNo: string }; kisClient: KisApiClient } {
+  if (ctx) {
+    return {
+      credentials: { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo },
+      kisClient: ctx.kisClient,
+    };
+  }
   return {
     credentials: {
       appKey: config.kis.appKey,
@@ -42,13 +49,14 @@ export async function forceStopRealtimeDdsobV2Ticker(
   market: MarketType,
   reason: 'force_stop' | 'auto_stop_loss' | 'exhaustion_stop_loss' | 'force_sell_candles' = 'force_stop',
   strategyId: AccountStrategy = 'realtimeDdsobV2',
+  ctx?: AccountContext,
 ): Promise<{ success: boolean; soldQty: number; message: string }> {
   const tag = market === 'domestic' ? 'KR' : 'US';
   console.log(`[ForceStop:${tag}] ticker=${ticker}`);
 
   // 1. credentials & accessToken
-  const { credentials, kisClient } = getCredentialsAndClient();
-  let accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const { credentials, kisClient } = getCredentialsAndClient(ctx);
+  let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
 
   // 2. state 조회 (exchangeCode 확인 + 보유수량 계산 겸용)
   const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
@@ -96,7 +104,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   } catch (err) {
     if (isTokenExpiredError(err)) {
       console.log(`[ForceStop:${tag}] Token expired, refreshing...`);
-      accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
+      accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
     } else {
       console.error(`[ForceStop:${tag}] Unfilled cleanup error:`, err);
     }

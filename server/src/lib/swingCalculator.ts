@@ -53,6 +53,7 @@ export interface SwingTickerConfig {
 }
 
 export interface SwingConfig {
+  shadowMode?: boolean;
   tickers: SwingTickerConfig[];
   globalPrincipal: number;
   maxPositions: number;

@@ -43,7 +43,9 @@ import {
   calculateDdsob,
   BuyRecord,
 } from '../lib/ddsobCalculator';
-import { getCommonConfig, getMarketStrategyConfig, isMarketActive, type CommonConfig } from '../lib/configHelper';
+import { getCommonConfig, getMarketStrategyConfig, type CommonConfig } from '../lib/configHelper';
+import type { AccountContext } from '../lib/accountContext';
+import type { AccountStore } from '../lib/localStore';
 
 // ==================== 헬퍼: 타임스탬프 생성 ====================
 
@@ -57,11 +59,12 @@ function nowISO(): string {
  * pendingOrder를 localStore에 저장하고 ID를 반환.
  * autoApprove 모드에서는 상태를 approved로 설정.
  */
-function createPendingOrder(order: Record<string, unknown>): string {
+function createPendingOrder(order: Record<string, unknown>, store?: AccountStore): string {
   const orderId = `ord_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const now = nowISO();
   const isApproved = order.status === 'approved';
-  localStore.setPendingOrder(orderId, {
+  const s = store ?? localStore;
+  s.setPendingOrder(orderId, {
     ...order,
     createdAt: now,
     ...(isApproved && { approvedAt: now }),
@@ -69,10 +72,11 @@ function createPendingOrder(order: Record<string, unknown>): string {
   return orderId;
 }
 
-function updatePendingOrder(orderId: string, update: Record<string, unknown>): void {
-  const existing = localStore.getPendingOrder<Record<string, unknown>>(orderId);
+function updatePendingOrder(orderId: string, update: Record<string, unknown>, store?: AccountStore): void {
+  const s = store ?? localStore;
+  const existing = s.getPendingOrder<Record<string, unknown>>(orderId);
   if (existing) {
-    localStore.setPendingOrder(orderId, { ...existing, ...update });
+    s.setPendingOrder(orderId, { ...existing, ...update });
   }
 }
 
@@ -80,33 +84,32 @@ function updatePendingOrder(orderId: string, update: Record<string, unknown>): v
 
 async function processVRTrading(
   common: CommonConfig,
-  options: { bypassRejection?: boolean } = {}
+  options: { bypassRejection?: boolean } = {},
+  ctx?: AccountContext
 ): Promise<void> {
-  const { userId, accountId } = config;
-  console.log(`[VR] Processing VR trading for user: ${userId}, account: ${accountId}`);
-
-  const chatId = await getUserTelegramChatId(userId);
-
-  // 자격증명: config에서 직접 읽기
-  const credentials = {
+  const credentials = ctx ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo } : {
     appKey: config.kis.appKey,
     appSecret: config.kis.appSecret,
     accountNo: config.kis.accountNo,
   };
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountId = ctx?.accountId ?? config.accountId;
+  const userId = config.userId;
+  const store: AccountStore = ctx?.store ?? localStore;
+  console.log(`[VR] Processing VR trading for user: ${userId}, account: ${accountId}`);
+
+  const chatId = await getUserTelegramChatId(userId);
 
   // 계좌 컨텍스트 생성 (텔레그램 메시지용)
-  const accountContext = {
-    nickname: accountId,
+  const accountCtxDisplay = {
+    nickname: ctx?.nickname ?? accountId,
     accountNo: credentials.accountNo,
   };
-
-  // KIS API 클라이언트 생성
-  const kisClient = new KisApiClient(config.kis.paperTrading);
 
   // 액세스 토큰 가져오기
   let accessToken: string;
   try {
-    accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+    accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
   } catch (err) {
     console.error(`[VR] Failed to get access token for user ${userId}:`, err);
     if (chatId) {
@@ -223,7 +226,7 @@ async function processVRTrading(
   }
 
   // VR 설정 조회 (시장별 경로)
-  const vrConfig = getMarketStrategyConfig<Record<string, any>>('overseas', 'vr');
+  const vrConfig = ctx ? ctx.store.getStrategyConfig<Record<string, any>>('overseas', 'vr') : getMarketStrategyConfig<Record<string, any>>('overseas', 'vr');
 
   if (!vrConfig?.enabled) {
     console.log(`[VR] VR not enabled for user ${userId}, account ${accountId}, vrConfig=${JSON.stringify(vrConfig)}`);
@@ -298,7 +301,7 @@ async function processVRTrading(
       },
     };
 
-    const orderId = createPendingOrder(initialOrder);
+    const orderId = createPendingOrder(initialOrder, store);
     console.log(`[VR] Created initial entry order: ${orderId}, qty=${buyQuantity}, amount=$${totalAmount.toFixed(2)}`);
 
     // 텔레그램 알림
@@ -351,7 +354,7 @@ async function processVRTrading(
           updatePendingOrder(orderId, {
             telegramChatId: chatId,
             telegramMessageId: msgResult.messageId,
-          });
+          }, store);
         }
       }
     }
@@ -360,7 +363,7 @@ async function processVRTrading(
   }
 
   // ==================== 일반 VR 처리 (잔량주문 방식) ====================
-  let vrState = localStore.getState<Record<string, any>>('vrState', ticker);
+  let vrState = store.getState<Record<string, any>>('vrState', ticker);
 
   // VR 상태가 없으면 초기화 (보유 수량이 있는 경우)
   if (!vrState) {
@@ -388,7 +391,7 @@ async function processVRTrading(
       createdAt: nowISO(),
     };
 
-    localStore.setState('vrState', ticker, vrState);
+    store.setState('vrState', ticker, vrState);
     console.log(`[VR] Initialized VR state for ${ticker}: V=$${initialV.toFixed(2)} (invested), eval=$${(totalQuantity * currentPrice).toFixed(2)}, weekNumber=1`);
   }
 
@@ -416,7 +419,7 @@ async function processVRTrading(
 
     // ==================== 이전 사이클 히스토리 저장 ====================
     try {
-      localStore.addCycleHistory({
+      store.addCycleHistory({
         ticker,
         market: 'overseas' as const,
         strategy: 'vr',
@@ -462,7 +465,7 @@ async function processVRTrading(
       currentEvaluation
     );
 
-    localStore.updateState('vrState', ticker, {
+    store.updateState('vrState', ticker, {
       targetValue: newV,
       formulaType,
       lastVUpdateDate: nowISO(),
@@ -513,8 +516,8 @@ async function processVRTrading(
       10
     );
 
-    // localStore에 저장
-    localStore.updateState('vrState', ticker, {
+    // store에 저장
+    store.updateState('vrState', ticker, {
       pendingOrders: {
         buy: pendingOrders.buy,
         sell: pendingOrders.sell,
@@ -578,7 +581,7 @@ async function processVRTrading(
     },
   };
 
-  const orderId = createPendingOrder(pendingOrder);
+  const orderId = createPendingOrder(pendingOrder, store);
 
   // 텔레그램 알림
   if (chatId) {
@@ -591,8 +594,8 @@ async function processVRTrading(
     const profitEmoji = profitRate >= 0 ? '📈' : '📉';
     const profitSign = profitRate >= 0 ? '+' : '';
 
-    const maskedNo = '****' + accountContext.accountNo.slice(-4);
-    const accountDisplay = `📌 ${accountContext.nickname} (${maskedNo})`;
+    const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
+    const accountDisplay = `📌 ${accountCtxDisplay.nickname} (${maskedNo})`;
 
     let ordersText = '';
     if (totalBuyOrders > 0) {
@@ -657,7 +660,7 @@ async function processVRTrading(
         updatePendingOrder(orderId, {
           telegramChatId: chatId,
           telegramMessageId: msgResult.messageId,
-        });
+        }, store);
       }
     }
   }
@@ -674,15 +677,31 @@ async function processVRTrading(
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function processDdsobTrading(
   common: CommonConfig,
-  _options: { bypassRejection?: boolean } = {}
+  _options: { bypassRejection?: boolean } = {},
+  ctx?: AccountContext
 ): Promise<void> {
-  const { userId, accountId } = config;
+  const credentials = ctx ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo } : {
+    appKey: config.kis.appKey,
+    appSecret: config.kis.appSecret,
+    accountNo: config.kis.accountNo,
+  };
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountId = ctx?.accountId ?? config.accountId;
+  const userId = config.userId;
+  const store: AccountStore = ctx?.store ?? localStore;
   console.log(`[DDSOB] Processing trading for user: ${userId}, account: ${accountId}`);
 
   const chatId = await getUserTelegramChatId(userId);
 
   // 떨사오팔 전략별 설정 조회 (시장별 경로)
-  const ddsobConfig = getMarketStrategyConfig<{
+  const ddsobConfig = ctx ? ctx.store.getStrategyConfig<{
+    ticker: string;
+    splitCount: number;
+    profitPercent: number;
+    forceSellDays: number;
+    stopAfterCycleEnd: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }>('overseas', 'ddsob' as any) : getMarketStrategyConfig<{
     ticker: string;
     splitCount: number;
     profitPercent: number;
@@ -700,25 +719,15 @@ export async function processDdsobTrading(
   const profitPercent: number = ddsobConfig.profitPercent || 0.01;
   const forceSellDays: number = ddsobConfig.forceSellDays ?? 10;
 
-  // 자격증명: config에서 직접 읽기
-  const credentials = {
-    appKey: config.kis.appKey,
-    appSecret: config.kis.appSecret,
-    accountNo: config.kis.accountNo,
-  };
-
-  const accountContext = {
-    nickname: accountId,
+  const accountCtxDisplay = {
+    nickname: ctx?.nickname ?? accountId,
     accountNo: credentials.accountNo,
   };
-
-  // KIS API 클라이언트 생성
-  const kisClient = new KisApiClient(config.kis.paperTrading);
 
   // 액세스 토큰 가져오기
   let accessToken: string;
   try {
-    accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+    accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
   } catch (err) {
     console.error(`[DDSOB] Failed to get access token for user ${userId}:`, err);
     if (chatId) {
@@ -760,7 +769,7 @@ export async function processDdsobTrading(
   }
 
   // ddsobState 조회 또는 초기화
-  let ddsobState = localStore.getState<Record<string, any>>('ddsobState', ticker);
+  let ddsobState = store.getState<Record<string, any>>('ddsobState', ticker);
 
   const amountPerRound = Math.round(((ddsobState?.principal || 0) / splitCount) * 100) / 100;
   let isFirstBuy = false;
@@ -799,7 +808,7 @@ export async function processDdsobTrading(
     const newAmountPerRound = Math.round((principal / splitCount) * 100) / 100;
 
     // 이전 사이클 번호 조회 (로컬 히스토리에서)
-    const allHistory = localStore.getAllCycleHistory<Record<string, any>>();
+    const allHistory = store.getAllCycleHistory<Record<string, any>>();
     const ddsobHistory = allHistory
       .filter(h => h.ticker === ticker && h.strategy === 'ddsob')
       .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
@@ -827,7 +836,7 @@ export async function processDdsobTrading(
       startedAt: nowISO(),
     };
 
-    localStore.setState('ddsobState', ticker, ddsobState);
+    store.setState('ddsobState', ticker, ddsobState);
     isFirstBuy = true;
     console.log(`[DDSOB] Initialized new cycle for ${ticker}: principal=$${principal.toFixed(2)}, amountPerRound=$${newAmountPerRound.toFixed(2)}`);
   } else if (ddsobState.status === 'completed') {
@@ -842,7 +851,7 @@ export async function processDdsobTrading(
 
     // 자동 재시작
     console.log(`[DDSOB] Auto-restarting cycle for ${ticker}`);
-    localStore.deleteState('ddsobState', ticker);
+    store.deleteState('ddsobState', ticker);
     ddsobState = null;
 
     let accountCash = 0;
@@ -876,8 +885,8 @@ export async function processDdsobTrading(
     const principal = accountCash;
     const newAmountPerRound = Math.round((principal / splitCount) * 100) / 100;
 
-    const allHistory = localStore.getAllCycleHistory<Record<string, any>>();
-    const ddsobHistory = allHistory
+    const allHistory2 = store.getAllCycleHistory<Record<string, any>>();
+    const ddsobHistory = allHistory2
       .filter(h => h.ticker === ticker && h.strategy === 'ddsob')
       .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
     const lastDdsobCycleNumber2 = ddsobHistory.length > 0 ? (ddsobHistory[0].cycleNumber || 0) : 0;
@@ -904,7 +913,7 @@ export async function processDdsobTrading(
       startedAt: nowISO(),
     };
 
-    localStore.setState('ddsobState', ticker, ddsobState);
+    store.setState('ddsobState', ticker, ddsobState);
     isFirstBuy = true;
     console.log(`[DDSOB] Restarted cycle for ${ticker}: principal=$${principal.toFixed(2)}, amountPerRound=$${newAmountPerRound.toFixed(2)}`);
 
@@ -927,7 +936,7 @@ export async function processDdsobTrading(
     if (isFirstBuy && ddsobState.maxRounds !== undefined && ddsobState.maxRounds < splitCount) {
       console.log(`[DDSOB] Resetting maxRounds from ${ddsobState.maxRounds} to ${splitCount} for new cycle start`);
       ddsobState.maxRounds = splitCount;
-      localStore.updateState('ddsobState', ticker, { maxRounds: splitCount });
+      store.updateState('ddsobState', ticker, { maxRounds: splitCount });
     }
   }
 
@@ -963,7 +972,7 @@ export async function processDdsobTrading(
 
   // 강제 매도 발동 시 pendingForceSellCount 기록
   if (calcResult.action === 'force_sell') {
-    localStore.updateState('ddsobState', ticker, {
+    store.updateState('ddsobState', ticker, {
       pendingForceSellCount: calcResult.sellOrders.length,
     });
     console.log(`[DDSOB] Force sell pending: ${calcResult.sellOrders.length}건, current maxRounds=${calcResult.analysis.maxRounds}`);
@@ -1032,12 +1041,12 @@ export async function processDdsobTrading(
     },
   };
 
-  const orderId = createPendingOrder(pendingOrderData);
+  const orderId = createPendingOrder(pendingOrderData, store);
 
   // 텔레그램 알림
   if (chatId) {
-    const maskedNo = '****' + accountContext.accountNo.slice(-4);
-    const accountDisplay = `📌 ${accountContext.nickname} (${maskedNo})`;
+    const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
+    const accountDisplay = `📌 ${accountCtxDisplay.nickname} (${maskedNo})`;
 
     let ordersText = '';
     if (calcResult.buyOrders.length > 0) {
@@ -1107,7 +1116,7 @@ export async function processDdsobTrading(
         updatePendingOrder(orderId, {
           telegramChatId: chatId,
           telegramMessageId: msgResult.messageId,
-        });
+        }, store);
       }
     }
   }
@@ -1119,11 +1128,20 @@ export async function processDdsobTrading(
 
 async function processInfiniteSellOnly(
   common: CommonConfig,
+  ctx?: AccountContext
 ): Promise<void> {
-  const { userId, accountId } = config;
+  const credentials = ctx ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo } : {
+    appKey: config.kis.appKey,
+    appSecret: config.kis.appSecret,
+    accountNo: config.kis.accountNo,
+  };
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountId = ctx?.accountId ?? config.accountId;
+  const userId = config.userId;
+  const store: AccountStore = ctx?.store ?? localStore;
 
-  // 활성/completing 사이클 조회 (localStore에서)
-  const allCycles = localStore.getAllStates<Record<string, any>>('cycles');
+  // 활성/completing 사이클 조회
+  const allCycles = store.getAllStates<Record<string, any>>('cycles');
   const activeCycles = new Map<string, Record<string, any>>();
   for (const [ticker, data] of allCycles) {
     if (data.status === 'active' || data.status === 'completing') {
@@ -1136,22 +1154,14 @@ async function processInfiniteSellOnly(
 
   const chatId = await getUserTelegramChatId(userId);
 
-  const credentials = {
-    appKey: config.kis.appKey,
-    appSecret: config.kis.appSecret,
-    accountNo: config.kis.accountNo,
-  };
-
-  const accountContext = {
-    nickname: accountId,
+  const accountCtxDisplay = {
+    nickname: ctx?.nickname ?? accountId,
     accountNo: credentials.accountNo,
   };
 
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-
   let accessToken: string;
   try {
-    accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+    accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
   } catch (err) {
     console.error(`[SellOnly:Infinite] Failed to get access token for user ${userId}:`, err);
     return;
@@ -1266,11 +1276,11 @@ async function processInfiniteSellOnly(
       },
     };
 
-    const orderId = createPendingOrder(sellPendingOrder);
+    const orderId = createPendingOrder(sellPendingOrder, store);
 
     if (chatId) {
-      const maskedNo = '****' + accountContext.accountNo.slice(-4);
-      const accountDisplay = `📌 ${accountContext.nickname} (${maskedNo})`;
+      const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
+      const accountDisplay = `📌 ${accountCtxDisplay.nickname} (${maskedNo})`;
 
       if (autoApprove) {
         await sendTelegramMessage(
@@ -1303,7 +1313,7 @@ async function processInfiniteSellOnly(
           updatePendingOrder(orderId, {
             telegramChatId: chatId,
             telegramMessageId: msgResult.messageId,
-          });
+          }, store);
         }
       }
     }
@@ -1316,11 +1326,20 @@ async function processInfiniteSellOnly(
 
 async function processDdsobSellOnly(
   common: CommonConfig,
+  ctx?: AccountContext
 ): Promise<void> {
-  const { userId, accountId } = config;
+  const credentials = ctx ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo } : {
+    appKey: config.kis.appKey,
+    appSecret: config.kis.appSecret,
+    accountNo: config.kis.accountNo,
+  };
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountId = ctx?.accountId ?? config.accountId;
+  const userId = config.userId;
+  const store: AccountStore = ctx?.store ?? localStore;
 
-  // 활성 ddsobState 조회 (localStore에서)
-  const allDdsobStates = localStore.getStatesWhere<Record<string, any>>('ddsobState', (data) => {
+  // 활성 ddsobState 조회
+  const allDdsobStates = store.getStatesWhere<Record<string, any>>('ddsobState', (data) => {
     return data.status === 'active' && (data.buyRecords || []).length > 0;
   });
 
@@ -1330,22 +1349,14 @@ async function processDdsobSellOnly(
 
   const chatId = await getUserTelegramChatId(userId);
 
-  const credentials = {
-    appKey: config.kis.appKey,
-    appSecret: config.kis.appSecret,
-    accountNo: config.kis.accountNo,
-  };
-
-  const accountContext = {
-    nickname: accountId,
+  const accountCtxDisplay = {
+    nickname: ctx?.nickname ?? accountId,
     accountNo: credentials.accountNo,
   };
 
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-
   let accessToken: string;
   try {
-    accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+    accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
   } catch (err) {
     console.error(`[SellOnly:DDSOB] Failed to get access token for user ${userId}:`, err);
     return;
@@ -1399,7 +1410,7 @@ async function processDdsobSellOnly(
 
     // 강제 매도 발동 시 pendingForceSellCount 기록
     if (calcResult.action === 'force_sell') {
-      localStore.updateState('ddsobState', ticker, {
+      store.updateState('ddsobState', ticker, {
         pendingForceSellCount: calcResult.sellOrders.length,
       });
       console.log(`[SellOnly:DDSOB] Force sell pending: ${calcResult.sellOrders.length}건 for ${ticker}`);
@@ -1442,11 +1453,11 @@ async function processDdsobSellOnly(
       },
     };
 
-    const orderId = createPendingOrder(pendingOrderData);
+    const orderId = createPendingOrder(pendingOrderData, store);
 
     if (chatId) {
-      const maskedNo = '****' + accountContext.accountNo.slice(-4);
-      const accountDisplay = `📌 ${accountContext.nickname} (${maskedNo})`;
+      const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
+      const accountDisplay = `📌 ${accountCtxDisplay.nickname} (${maskedNo})`;
 
       let ordersText = '';
       const normalSells = calcResult.sellOrders.filter(o => !o.isForceSell);
@@ -1506,7 +1517,7 @@ async function processDdsobSellOnly(
           updatePendingOrder(orderId, {
             telegramChatId: chatId,
             telegramMessageId: msgResult.messageId,
-          });
+          }, store);
         }
       }
     }
@@ -1519,36 +1530,54 @@ async function processDdsobSellOnly(
 
 async function processAccountTrading(
   common: CommonConfig,
-  options: { bypassRejection?: boolean } = {}
+  options: { bypassRejection?: boolean } = {},
+  ctx?: AccountContext
 ): Promise<void> {
-  const { userId, accountId } = config;
+  const accountId = ctx?.accountId ?? config.accountId;
+  const userId = config.userId;
+  const store: AccountStore = ctx?.store ?? localStore;
   console.log(`Processing trading for user: ${userId}, account: ${accountId}`);
 
-  // [시장별 전략 분기] 해외 시장 전략에 따라 별도 함수로 위임
-  const overseasStrategy = common.overseas?.strategy;
+  // [시장별 전략 분기] 해외 시장 — 멀티 전략 지원
+  const { getActiveStrategies } = await import('../lib/configHelper');
+  const activeOverseas = getActiveStrategies(common, 'overseas');
 
-  // 해외 비활성 또는 전략 미선택: 잔여 포지션 매도 전용
-  if (!isMarketActive(common, 'overseas')) {
-    await processInfiniteSellOnly(common);
-    await processDdsobSellOnly(common);
+  // 해외 비활성: 잔여 포지션 매도 전용
+  if (activeOverseas.length === 0) {
+    await processInfiniteSellOnly(common, ctx);
+    await processDdsobSellOnly(common, ctx);
     return;
   }
 
-  if (overseasStrategy === 'vr') {
-    await processVRTrading(common, options);
-    await processInfiniteSellOnly(common);
-    await processDdsobSellOnly(common);
-    return;
+  // VR 전략 활성 시 실행
+  if (activeOverseas.includes('vr')) {
+    await processVRTrading(common, options, ctx);
+  } else {
+    // VR 비활성이면 잔여 포지션 매도
   }
-  if (overseasStrategy === 'realtimeDdsobV2') {
-    // 실사오팔v2는 realtimeTradingTriggerV2US/KR에서 별도 처리
-    await processInfiniteSellOnly(common);
-    await processDdsobSellOnly(common);
+
+  // realtimeDdsobV2/V2.1은 별도 크론에서 처리
+  // infinite가 아니면 잔여 포지션 매도
+  if (!activeOverseas.includes('infinite')) {
+    await processInfiniteSellOnly(common, ctx);
+  }
+
+  await processDdsobSellOnly(common, ctx);
+
+  if (!activeOverseas.includes('infinite')) {
     return;
   }
 
-  // Default: 무한매수법 (overseasStrategy === 'infinite')
-  const infiniteConfig = getMarketStrategyConfig<{
+  // 무한매수법 실행
+  const infiniteConfig = ctx ? ctx.store.getStrategyConfig<{
+    tickers: string[];
+    tickerConfigs: Record<string, any>;
+    splitCount?: number;
+    targetProfit?: Record<string, number>;
+    cycleEndRequested?: boolean;
+    stopAfterCycleEnd?: boolean;
+    updatedAt?: any;
+  }>('overseas', 'infinite') : getMarketStrategyConfig<{
     tickers: string[];
     tickerConfigs: Record<string, any>;
     splitCount?: number;
@@ -1564,24 +1593,21 @@ async function processAccountTrading(
 
   const chatId = await getUserTelegramChatId(userId);
 
-  // 자격증명: config에서 직접 읽기
-  const credentials = {
+  const credentials = ctx ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo } : {
     appKey: config.kis.appKey,
     appSecret: config.kis.appSecret,
     accountNo: config.kis.accountNo,
   };
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
 
-  const accountContext = {
-    nickname: accountId,
+  const accountCtxDisplay = {
+    nickname: ctx?.nickname ?? accountId,
     accountNo: credentials.accountNo,
   };
 
-  // KIS API 클라이언트 생성
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-
   let accessToken: string;
   try {
-    accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+    accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
   } catch (err) {
     console.error(`Failed to get access token for user ${userId}, account ${accountId}:`, err);
     if (chatId) {
@@ -1672,7 +1698,7 @@ async function processAccountTrading(
     const totalQuantity = holdingData ? parseInt(holdingData.ovrs_cblc_qty || '0') : 0;
     const avgPrice = holdingData ? parseFloat(holdingData.pchs_avg_pric || '0') : 0;
     const holdingValue = totalQuantity * avgPrice;
-    const cycleData = localStore.getState<Record<string, any>>('cycles', ticker);
+    const cycleData = store.getState<Record<string, any>>('cycles', ticker);
 
     const needsNewCycle = totalQuantity === 0 && avgPrice === 0;
 
@@ -1763,9 +1789,9 @@ async function processAccountTrading(
       // bypassRejection이 false인 경우에도 로컬에서는 skip
       // (원본에서 hasRejectedOrderToday는 Firestore pendingOrders 쿼리)
 
-      // 오늘 이미 pending 주문이 있는지 확인 (localStore)
+      // 오늘 이미 pending 주문이 있는지 확인
       const todayStart = getTodayStart();
-      const allPending = localStore.getAllPendingOrders<Record<string, any>>();
+      const allPending = store.getAllPendingOrders<Record<string, any>>();
       let hasPendingToday = false;
       for (const [, order] of allPending) {
         if (order.ticker === ticker && order.status === 'pending') {
@@ -1885,7 +1911,7 @@ async function processAccountTrading(
           startedAt: nowISO(),
         };
 
-        localStore.setState('cycles', ticker, newCycleState);
+        store.setState('cycles', ticker, newCycleState);
 
         cycleData = newCycleState;
 
@@ -1919,7 +1945,7 @@ async function processAccountTrading(
       // --- 쿼터모드 진입 감지 시 pending 상태 저장 ---
       if (calcResult.quarterModeInfo?.shouldEnterQuarterMode &&
           calcResult.quarterModeInfo.quarterModeState) {
-        localStore.updateState('cycles', ticker, {
+        store.updateState('cycles', ticker, {
           quarterMode: {
             ...calcResult.quarterModeInfo.quarterModeState,
             isActive: false,
@@ -2027,11 +2053,11 @@ async function processAccountTrading(
           },
         };
 
-        const orderId = createPendingOrder(combinedPendingOrder);
+        const orderId = createPendingOrder(combinedPendingOrder, store);
 
         if (chatId) {
-          const maskedNo = '****' + accountContext.accountNo.slice(-4);
-          const accountDisplay = `📌 ${accountContext.nickname} (${maskedNo})`;
+          const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
+          const accountDisplay = `📌 ${accountCtxDisplay.nickname} (${maskedNo})`;
 
           if (autoApprove) {
             await sendTelegramMessage(
@@ -2064,7 +2090,7 @@ async function processAccountTrading(
               updatePendingOrder(orderId, {
                 telegramChatId: chatId,
                 telegramMessageId: msgResult.messageId,
-              });
+              }, store);
             }
           }
         }
@@ -2097,11 +2123,11 @@ async function processAccountTrading(
           },
         };
 
-        const orderId = createPendingOrder(pendingOrderData);
+        const orderId = createPendingOrder(pendingOrderData, store);
 
         if (chatId) {
-          const maskedNo = '****' + accountContext.accountNo.slice(-4);
-          const accountDisplay = `📌 ${accountContext.nickname} (${maskedNo})`;
+          const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
+          const accountDisplay = `📌 ${accountCtxDisplay.nickname} (${maskedNo})`;
 
           if (autoApprove) {
             await sendTelegramMessage(
@@ -2134,7 +2160,7 @@ async function processAccountTrading(
               updatePendingOrder(orderId, {
                 telegramChatId: chatId,
                 telegramMessageId: msgResult.messageId,
-              });
+              }, store);
             }
           }
         }
@@ -2167,11 +2193,11 @@ async function processAccountTrading(
           },
         };
 
-        const orderId = createPendingOrder(sellPendingOrder);
+        const orderId = createPendingOrder(sellPendingOrder, store);
 
         if (chatId) {
-          const maskedNo = '****' + accountContext.accountNo.slice(-4);
-          const accountDisplay = `📌 ${accountContext.nickname} (${maskedNo})`;
+          const maskedNo = '****' + accountCtxDisplay.accountNo.slice(-4);
+          const accountDisplay = `📌 ${accountCtxDisplay.nickname} (${maskedNo})`;
 
           if (autoApprove) {
             await sendTelegramMessage(
@@ -2204,7 +2230,7 @@ async function processAccountTrading(
               updatePendingOrder(orderId, {
                 telegramChatId: chatId,
                 telegramMessageId: msgResult.messageId,
-              });
+              }, store);
             }
           }
         }
@@ -2232,21 +2258,23 @@ async function processAccountTrading(
  * 해외 매매 트리거 — 로컬 실행 버전
  * 스케줄러에서 호출하거나 수동 실행
  */
-export async function runDailyTrading(options: { bypassRejection?: boolean } = {}): Promise<void> {
+export async function runDailyTrading(options: { bypassRejection?: boolean } = {}, ctx?: AccountContext): Promise<void> {
   console.log('Buy order trigger started (local)');
 
-  const { userId, accountId } = config;
+  const accountId = ctx?.accountId ?? config.accountId;
+  const userId = config.userId;
+  const store: AccountStore = ctx?.store ?? localStore;
 
   // 1. 전날 미처리된 pending 주문 모두 만료 처리
   try {
     const todayStart = getTodayStart();
-    const allPending = localStore.getAllPendingOrders<Record<string, any>>();
+    const allPending = store.getAllPendingOrders<Record<string, any>>();
 
     for (const [orderId, order] of allPending) {
       if (order.status === 'pending') {
         const createdAt = order.createdAt ? new Date(order.createdAt) : new Date(0);
         if (createdAt < todayStart) {
-          localStore.setPendingOrder(orderId, {
+          store.setPendingOrder(orderId, {
             ...order,
             status: 'expired',
             expiredAt: nowISO(),
@@ -2297,7 +2325,7 @@ export async function runDailyTrading(options: { bypassRejection?: boolean } = {
   }
 
   try {
-    const common = getCommonConfig();
+    const common = ctx ? ctx.store.getTradingConfig<CommonConfig>() : getCommonConfig();
     if (!common) {
       console.log(`No trading config found for ${userId}/${accountId}`);
       return;
@@ -2308,7 +2336,7 @@ export async function runDailyTrading(options: { bypassRejection?: boolean } = {
       return;
     }
 
-    await processAccountTrading(common, options);
+    await processAccountTrading(common, options, ctx);
 
     console.log('Trading trigger completed');
   } catch (error) {

@@ -8,6 +8,7 @@ import * as path from 'path';
 import { config } from './config';
 import { initLocalStore } from './lib/localStore';
 import { registerAllCrons } from './cron';
+import { accountRoutes } from './routes/accounts';
 import { configRoutes } from './routes/config';
 import { startTelegramPolling } from './telegram/poller';
 
@@ -23,6 +24,9 @@ app.use(express.static(path.resolve(__dirname, '../public')));
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// 계좌 관리 API
+app.use('/accounts', accountRoutes);
 
 // 설정 API
 app.use('/config', configRoutes);

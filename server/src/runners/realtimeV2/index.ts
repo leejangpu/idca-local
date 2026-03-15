@@ -5,6 +5,7 @@
 
 import { config } from '../../config';
 import * as localStore from '../../lib/localStore';
+import { AccountContext } from '../../lib/accountContext';
 import { isUSMarketOpen, getUSMarketHolidayName } from '../../lib/usMarketHolidays';
 import {
   isMarketStrategyActive,
@@ -36,11 +37,11 @@ import {
   processAutoSelectStocksV2_1US,
 } from './autoSelect';
 
-// 동시 실행 방어: 이전 트리거가 실행 중이면 다음 트리거를 스킵
-let usTriggerRunningV2 = false;
-let krTriggerRunningV2 = false;
+// 동시 실행 방어: 이전 트리거가 실행 중이면 다음 트리거를 스킵 (계정별)
+const usRunning = new Map<string, boolean>();
+const krRunning = new Map<string, boolean>();
 
-// ---------- 단일 유저/계정 ----------
+// ---------- 단일 유저/계정 (default fallback) ----------
 const userId = config.userId;
 const accountId = config.accountId;
 
@@ -48,22 +49,24 @@ const accountId = config.accountId;
  * 실사오팔v2 미국장 러너
  * 1분마다 호출, overseas 티커만 처리
  */
-export async function runRealtimeV2US(): Promise<void> {
+export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
   if (!isUSMarketOpen()) return;
 
+  const runKey = ctx?.accountId ?? 'default';
+
   // 이전 트리거가 아직 실행 중이면 스킵
-  if (usTriggerRunningV2) {
+  if (usRunning.get(runKey)) {
     console.log('[RealtimeDdsobV2:US] Previous trigger still running, skipping');
     return;
   }
-  usTriggerRunningV2 = true;
+  usRunning.set(runKey, true);
 
   console.log('[RealtimeDdsobV2:US] Trigger started');
 
   const currentMinute = getETCurrentMinute();
 
   // 실사오팔v2: 장 시작 20분 후부터 매매 (09:50 ET~)
-  if (currentMinute < 9 * 60 + 50) { usTriggerRunningV2 = false; return; }
+  if (currentMinute < 9 * 60 + 50) { usRunning.set(runKey, false); return; }
 
   // 휴장일 확인
   const now = new Date();
@@ -78,7 +81,7 @@ export async function runRealtimeV2US(): Promise<void> {
   const holidayName = getUSMarketHolidayName(usTime);
   if (holidayName) {
     console.log(`[RealtimeDdsobV2:US] Holiday: ${holidayName}`);
-    usTriggerRunningV2 = false;
+    usRunning.set(runKey, false);
     return;
   }
 
@@ -143,7 +146,7 @@ export async function runRealtimeV2US(): Promise<void> {
     if (isUSEODTime && eodTickers.length > 0) {
       try {
         const eodStrategyId: AccountStrategy = isV2_1Active ? 'realtimeDdsobV2_1' : 'realtimeDdsobV2';
-        await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'overseas', eodStrategyId);
+        await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'overseas', eodStrategyId, ctx);
       } catch (err) {
         console.error(`[RealtimeDdsobV2:US] EOD error ${userId}/${accountId}:`, err);
       }
@@ -165,7 +168,7 @@ export async function runRealtimeV2US(): Promise<void> {
           return new Promise<void>(resolve => setTimeout(resolve, i * 300)).then(async () => {
             try {
               await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'overseas',
-                !isActiveStrategy ? { sellOnly: true, strategyId: tradingStrategyId } : { strategyId: tradingStrategyId });
+                !isActiveStrategy ? { sellOnly: true, strategyId: tradingStrategyId } : { strategyId: tradingStrategyId }, ctx);
             } catch (err) {
               console.error(`[RealtimeDdsobV2:US] Error ${userId}/${accountId}/${ticker}:`, err);
             }
@@ -190,7 +193,7 @@ export async function runRealtimeV2US(): Promise<void> {
           processedCount++;
           return new Promise<void>(resolve => setTimeout(resolve, i * 300)).then(async () => {
             try {
-              await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'overseas', { strategyId: tradingStrategyId2 });
+              await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'overseas', { strategyId: tradingStrategyId2 }, ctx);
             } catch (err) {
               console.error(`[RealtimeDdsobV2:US] New cycle error ${tc.ticker}:`, err);
             }
@@ -217,11 +220,11 @@ export async function runRealtimeV2US(): Promise<void> {
               const emptySlots = autoConfigV2_1.stockCount - currentUSAutoCount;
               if (emptySlots > 0) {
                 console.log(`[RealtimeDdsobV2.1:US] Empty slots detected: ${emptySlots}`);
-                const newTickers = await processAutoSelectStocksV2_1US(autoConfigV2_1, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' });
+                const newTickers = await processAutoSelectStocksV2_1US(autoConfigV2_1, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
                 for (const ntc of newTickers) {
                   processedCount++;
                   try {
-                    await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'overseas', { strategyId: 'realtimeDdsobV2_1' });
+                    await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'overseas', { strategyId: 'realtimeDdsobV2_1' }, ctx);
                   } catch (err) {
                     console.error(`[RealtimeDdsobV2.1:US] Refill immediate trade error ${ntc.ticker}:`, err);
                   }
@@ -235,11 +238,11 @@ export async function runRealtimeV2US(): Promise<void> {
               const emptySlots = autoConfigUS.stockCount - currentUSAutoCount;
               if (emptySlots > 0) {
                 console.log(`[RealtimeDdsobV2:US] Empty slots detected: ${emptySlots} (target=${autoConfigUS.stockCount}, current=${currentUSAutoCount})`);
-                const newTickers = await processAutoSelectStocksUS(autoConfigUS, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' });
+                const newTickers = await processAutoSelectStocksUS(autoConfigUS, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
                 for (const ntc of newTickers) {
                   processedCount++;
                   try {
-                    await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'overseas');
+                    await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'overseas', undefined, ctx);
                   } catch (err) {
                     console.error(`[RealtimeDdsobV2:US] Refill immediate trade error ${ntc.ticker}:`, err);
                   }
@@ -258,7 +261,7 @@ export async function runRealtimeV2US(): Promise<void> {
   } catch (error) {
     console.error('[RealtimeDdsobV2:US] Trigger error:', error);
   } finally {
-    usTriggerRunningV2 = false;
+    usRunning.set(runKey, false);
   }
 }
 
@@ -266,15 +269,17 @@ export async function runRealtimeV2US(): Promise<void> {
  * 실사오팔v2 한국장 러너
  * 1분마다 호출, domestic 티커만 처리
  */
-export async function runRealtimeV2KR(): Promise<void> {
+export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
   if (!isKRMarketOpen()) return;
 
+  const runKey = ctx?.accountId ?? 'default';
+
   // 이전 트리거가 아직 실행 중이면 스킵
-  if (krTriggerRunningV2) {
+  if (krRunning.get(runKey)) {
     console.log('[RealtimeDdsobV2:KR] Previous trigger still running, skipping');
     return;
   }
-  krTriggerRunningV2 = true;
+  krRunning.set(runKey, true);
 
   console.log('[RealtimeDdsobV2:KR] Trigger started');
 
@@ -283,13 +288,13 @@ export async function runRealtimeV2KR(): Promise<void> {
   const currentMinute = getKSTCurrentMinute();
 
   // 실사오팔v2: 장 시작 20분 후부터 매매 (09:20 KST~)
-  if (currentMinute < 9 * 60 + 20) { krTriggerRunningV2 = false; return; }
+  if (currentMinute < 9 * 60 + 20) { krRunning.set(runKey, false); return; }
 
   // 휴장일 확인
   const holidayName = getKRMarketHolidayName(kstTime);
   if (holidayName) {
     console.log(`[RealtimeDdsobV2:KR] Holiday: ${holidayName}`);
-    krTriggerRunningV2 = false;
+    krRunning.set(runKey, false);
     return;
   }
 
@@ -346,7 +351,7 @@ export async function runRealtimeV2KR(): Promise<void> {
     // ======== 1. EOD 일괄 처리 (autoSelected/forceLiquidateAtClose) ========
     if (isEODTime && eodTickers.length > 0) {
       try {
-        await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>);
+        await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'domestic', 'realtimeDdsobV2', ctx);
       } catch (err) {
         console.error(`[RealtimeDdsobV2:KR] EOD error ${userId}/${accountId}:`, err);
       }
@@ -367,7 +372,7 @@ export async function runRealtimeV2KR(): Promise<void> {
           return new Promise<void>(resolve => setTimeout(resolve, i * 300)).then(async () => {
             try {
               await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'domestic',
-                !isActiveStrategy ? { sellOnly: true } : undefined);
+                !isActiveStrategy ? { sellOnly: true } : undefined, ctx);
             } catch (err) {
               console.error(`[RealtimeDdsobV2:KR] Error ${userId}/${accountId}/${ticker}:`, err);
             }
@@ -399,7 +404,7 @@ export async function runRealtimeV2KR(): Promise<void> {
           processedCount++;
           return new Promise<void>(resolve => setTimeout(resolve, i * 300)).then(async () => {
             try {
-              await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'domestic');
+              await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'domestic', undefined, ctx);
             } catch (err) {
               console.error(`[RealtimeDdsobV2:KR] New cycle error ${tc.ticker}:`, err);
             }
@@ -423,13 +428,13 @@ export async function runRealtimeV2KR(): Promise<void> {
 
             if (emptySlots > 0) {
               console.log(`[RealtimeDdsobV2:KR] Empty slots detected: ${emptySlots} (target=${autoConfig.stockCount}, current=${currentAutoCount})`);
-              const newTickers = await processAutoSelectStocks(autoConfig, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' });
+              const newTickers = await processAutoSelectStocks(autoConfig, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
 
               // refill로 추가된 종목 즉시 매매 시작 (다음 틱까지 기다리지 않음)
               for (const ntc of newTickers) {
                 processedCount++;
                 try {
-                  await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'domestic');
+                  await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'domestic', undefined, ctx);
                 } catch (err) {
                   console.error(`[RealtimeDdsobV2:KR] Refill immediate trade error ${ntc.ticker}:`, err);
                 }
@@ -447,6 +452,6 @@ export async function runRealtimeV2KR(): Promise<void> {
   } catch (error) {
     console.error('[RealtimeDdsobV2:KR] Trigger error:', error);
   } finally {
-    krTriggerRunningV2 = false;
+    krRunning.set(runKey, false);
   }
 }

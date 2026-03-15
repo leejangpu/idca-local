@@ -17,6 +17,7 @@
 import { config } from '../config';
 import * as localStore from '../lib/localStore';
 import { KisApiClient, getOrRefreshToken, isTokenExpiredError } from '../lib/kisApi';
+import { type AccountContext } from '../lib/accountContext';
 import {
   sendTelegramMessage,
   getUserTelegramChatId,
@@ -47,7 +48,8 @@ import {
   deleteMomentumScalpState,
   getMomentumScalpStateByTicker,
 } from '../lib/slotAllocator';
-import { getCommonConfig, getMarketStrategyConfig, isMarketStrategyActive } from '../lib/configHelper';
+import { type CommonConfig, getCommonConfig, getMarketStrategyConfig, isMarketStrategyActive } from '../lib/configHelper';
+import { getOccupiedTickersExcluding } from '../lib/activeTickerRegistry';
 
 // 동시 실행 방어
 let buyTriggerRunning = false;
@@ -75,7 +77,7 @@ const PENDING_BUY_HARD_TIMEOUT_MS = 60 * 1000;
 // 매수 트리거 (1분 간격)
 // ========================================
 
-export async function runMomentumScalpBuyKR(): Promise<void> {
+export async function runMomentumScalpBuyKR(ctx?: AccountContext): Promise<void> {
   if (!isKRMarketOpen()) return;
 
   if (buyTriggerRunning) {
@@ -101,11 +103,11 @@ export async function runMomentumScalpBuyKR(): Promise<void> {
 
   try {
     try {
-      await processAccount(currentMinute, todayStr);
+      await processAccount(currentMinute, todayStr, ctx);
     } catch (err) {
       console.error(`[QuickScalp] Error:`, err);
       await sendAlert('처리 실패',
-        `계좌 처리 중 오류: ${err instanceof Error ? err.message : String(err)}`);
+        `계좌 처리 중 오류: ${err instanceof Error ? err.message : String(err)}`, ctx);
     }
 
     console.log('[QuickScalp] Trigger completed');
@@ -122,14 +124,17 @@ export async function runMomentumScalpBuyKR(): Promise<void> {
 
 async function processAccount(
   currentMinute: number,
-  todayStr: string
+  todayStr: string,
+  ctx?: AccountContext
 ): Promise<void> {
-  const common = getCommonConfig();
+  const common = ctx ? ctx.store.getTradingConfig<CommonConfig>() : getCommonConfig();
   if (!common) return;
 
   if (!isMarketStrategyActive(common, 'domestic', 'momentumScalp')) return;
 
-  const scalpConfig = getMarketStrategyConfig<MomentumScalpConfig>('domestic', 'momentumScalp');
+  const scalpConfig = ctx
+    ? ctx.store.getStrategyConfig<MomentumScalpConfig>('domestic', 'momentumScalp')
+    : getMarketStrategyConfig<MomentumScalpConfig>('domestic', 'momentumScalp');
   if (!scalpConfig || !scalpConfig.enabled) return;
 
   // 조건검색 설정 확인
@@ -138,17 +143,21 @@ async function processAccount(
     return;
   }
 
-  console.log(`[QuickScalp] Processing ${config.userId}/${config.accountId}`);
+  const credentials = ctx
+    ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
+    : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountNo = ctx?.credentials.accountNo ?? config.kis.accountNo;
+  const accountId = ctx?.accountId ?? config.accountId;
+  const userId = config.userId;
+
+  console.log(`[QuickScalp] Processing ${userId}/${accountId}`);
 
   // 자격증명 & 토큰
-  const { userId, accountId } = config;
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-  const credentials = { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
-  let accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+  let accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
   const chatId = await getUserTelegramChatId(userId);
 
-  const { appKey, appSecret } = config.kis;
-  const accountNo = config.kis.accountNo;
+  const { appKey, appSecret } = credentials;
 
   // pending_buy 체결 확인은 매도 트리거(5초 루프)에서 처리 (single owner 원칙)
 
@@ -168,12 +177,12 @@ async function processAccount(
     await handleNewBuy(
       scalpConfig,
       kisClient, appKey, appSecret, accessToken, accountNo,
-      todayStr, chatId, currentMinute
+      todayStr, chatId, currentMinute, ctx
     );
   } catch (err) {
     console.error(`[QuickScalp] New buy error:`, err);
     await sendAlert('신규 매수 실패',
-      `${err instanceof Error ? err.message : String(err)}`);
+      `${err instanceof Error ? err.message : String(err)}`, ctx);
   }
 }
 
@@ -275,8 +284,10 @@ async function handleNewBuy(
   accountNo: string,
   todayStr: string,
   chatId: string | null,
-  currentMinute: number
+  currentMinute: number,
+  ctx?: AccountContext
 ): Promise<void> {
+  const store = ctx?.store ?? localStore;
   // 빈 슬롯 + 배분 금액 확인
   const refill = await processSlotRefill(
     scalpConfig,
@@ -317,7 +328,7 @@ async function handleNewBuy(
   // 쿨다운: 오늘 손절/타임아웃 종목 재진입 방지 (config.cooldownEnabled=true일 때만)
   const cooldownTickers = new Set<string>();
   if (scalpConfig.cooldownEnabled) {
-    const todayLogs = localStore.getLogs<{
+    const todayLogs = store.getLogs<{
       ticker: string;
       exitReason: string;
       createdAt?: string;
@@ -330,8 +341,11 @@ async function handleNewBuy(
     }
   }
 
-  // 점유 종목 + 쿨다운 제외
+  // 점유 종목 + 쿨다운 제외 + 다른 전략 점유 종목
   const occupiedSet = new Set(refill.occupiedTickers);
+  for (const t of getOccupiedTickersExcluding('domestic', 'momentumScalp')) {
+    occupiedSet.add(t);
+  }
   const evalTargets: Array<{ ticker: string; name: string; price: number }> = [];
 
   for (const candidate of topCandidates) {
@@ -494,7 +508,7 @@ async function handleNewBuy(
 
   // 스캔 통계 로그 기록 (scalpScanLogs)
   try {
-    localStore.appendLog('scalpScanLogs', todayStr, {
+    store.appendLog('scalpScanLogs', todayStr, {
       ...scanStats,
       currentMinute,
       shadowMode: scalpConfig.shadowMode || false,
@@ -527,7 +541,8 @@ function writeTradeLog(
     targetTicks?: number | null;       // 0.5% 도달에 필요한 틱 수
     // 실행 품질 기록
     bestBidAtExit?: number | null;     // 매도 판단 시점의 best bid
-  }
+  },
+  ctx?: AccountContext
 ): void {
   const {
     ticker, stockName, entryPrice, entryQuantity,
@@ -549,7 +564,8 @@ function writeTradeLog(
   }
 
   const todayStr = getKSTDateString();
-  localStore.appendLog('scalpTradeLogs', todayStr, {
+  const store = ctx?.store ?? localStore;
+  store.appendLog('scalpTradeLogs', todayStr, {
     ticker,
     stockName,
     market: 'domestic',
@@ -600,7 +616,8 @@ function writeShadowTradeLog(
     targetTicks?: number | null;
     bestBidAtExit?: number | null;
     currentPriceAtExit?: number | null;
-  }
+  },
+  ctx?: AccountContext
 ): void {
   const {
     ticker, stockName, entryPrice, entryQuantity,
@@ -620,7 +637,8 @@ function writeShadowTradeLog(
   }
 
   const todayStr = getKSTDateString();
-  localStore.appendLog('scalpShadowLogs', todayStr, {
+  const store = ctx?.store ?? localStore;
+  store.appendLog('scalpShadowLogs', todayStr, {
     ticker,
     stockName,
     market: 'domestic',
@@ -663,7 +681,7 @@ const PENDING_SELL_TIMEOUT_MS = 5 * 60 * 1000;
 // 매도 API 최대 재시도 횟수
 const SELL_API_MAX_RETRIES = 3;
 
-export async function runMomentumScalpSellKR(): Promise<void> {
+export async function runMomentumScalpSellKR(ctx?: AccountContext): Promise<void> {
   if (!isKRMarketOpen()) return;
 
   if (sellTriggerRunning) {
@@ -686,7 +704,7 @@ export async function runMomentumScalpSellKR(): Promise<void> {
 
   try {
     try {
-      await processSellAccount(todayStr, currentMinute);
+      await processSellAccount(todayStr, currentMinute, ctx);
     } catch (err) {
       console.error(`[QuickScalp-Sell] Error:`, err);
     }
@@ -699,14 +717,16 @@ export async function runMomentumScalpSellKR(): Promise<void> {
 
 async function processSellAccount(
   todayStr: string,
-  currentMinute: number
+  currentMinute: number,
+  ctx?: AccountContext
 ): Promise<void> {
-  const common = getCommonConfig();
+  const store = ctx?.store ?? localStore;
+  const common = ctx ? ctx.store.getTradingConfig<CommonConfig>() : getCommonConfig();
   if (!common) return;
 
   if (!isMarketStrategyActive(common, 'domestic', 'momentumScalp')) {
     // 매도 전용 모드: 활성 슬롯이 있으면 매도만 처리
-    const activeStates = localStore.getStatesWhere<MomentumScalpState & Record<string, unknown>>(
+    const activeStates = store.getStatesWhere<MomentumScalpState & Record<string, unknown>>(
       'momentumScalpState',
       s => s.status === 'active' || s.status === 'pending_sell'
     );
@@ -714,19 +734,24 @@ async function processSellAccount(
     console.log(`[QuickScalp] 매도 전용 모드`);
   }
 
-  const scalpConfig = getMarketStrategyConfig<MomentumScalpConfig>('domestic', 'momentumScalp');
+  const scalpConfig = ctx
+    ? ctx.store.getStrategyConfig<MomentumScalpConfig>('domestic', 'momentumScalp')
+    : getMarketStrategyConfig<MomentumScalpConfig>('domestic', 'momentumScalp');
   if (!scalpConfig || !scalpConfig.enabled) return;
 
-  const { userId, accountId } = config;
-  const kisClient = new KisApiClient(config.kis.paperTrading);
-  const credentials = { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
-  let accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+  const credentials = ctx
+    ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
+    : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
+  const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+  const accountNo = ctx?.credentials.accountNo ?? config.kis.accountNo;
+  const accountId = ctx?.accountId ?? config.accountId;
+  const userId = config.userId;
+  let accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
   const chatId = await getUserTelegramChatId(userId);
-  const { appKey, appSecret } = config.kis;
-  const accountNo = config.kis.accountNo;
+  const { appKey, appSecret } = credentials;
 
   // ── 1차: pending_sell 체결 확인 (1회만) ──
-  const allStates = localStore.getAllStates<MomentumScalpState>('momentumScalpState');
+  const allStates = store.getAllStates<MomentumScalpState>('momentumScalpState');
 
   for (const [, state] of allStates) {
     if (state.status !== 'pending_sell') continue;
@@ -735,12 +760,12 @@ async function processSellAccount(
       accessToken = await handlePendingSell(
         state, currentMinute,
         kisClient, appKey, appSecret, accessToken, accountNo,
-        todayStr, chatId
+        todayStr, chatId, ctx
       );
     } catch (err) {
       if (isTokenExpiredError(err)) {
         accessToken = await getOrRefreshToken(
-          userId, accountId, credentials, kisClient, true
+          '', accountId, credentials, kisClient, true
         );
       }
       console.error(`[QuickScalp-Sell] PendingSell error ${state.ticker}:`, err);
@@ -810,7 +835,7 @@ async function processSellAccount(
           targetTicks: state.targetTicks,
           bestBidAtExit: bidPrice,
           currentPriceAtExit: currentPrice,
-        });
+        }, ctx);
 
         deleteMomentumScalpState(ticker);
         const profitRate = ((exitPrice - entryPrice) / entryPrice * 100).toFixed(2);
@@ -852,7 +877,7 @@ async function processSellAccount(
           console.error(`[QuickScalp-Sell] ${ticker} 종가 단일가 매도 실패:`, err);
           if (isTokenExpiredError(err)) {
             accessToken = await getOrRefreshToken(
-              userId, accountId,
+              '', accountId,
               { appKey, appSecret },
               kisClient, true
             );
@@ -886,7 +911,7 @@ async function processSellAccount(
     }
 
     // 매 라운드마다 전체 상태 재조회
-    const roundStates = localStore.getStatesWhere<MomentumScalpState & Record<string, unknown>>(
+    const roundStates = store.getStatesWhere<MomentumScalpState & Record<string, unknown>>(
       'momentumScalpState',
       s => s.status === 'pending_buy' || s.status === 'active'
     );
@@ -909,7 +934,7 @@ async function processSellAccount(
       } catch (err) {
         if (isTokenExpiredError(err)) {
           accessToken = await getOrRefreshToken(
-            userId, accountId, credentials, kisClient, true
+            '', accountId, credentials, kisClient, true
           );
         }
         console.error(`[QuickScalp-Sell] PendingBuy check error ${state.ticker}:`, err);
@@ -934,12 +959,12 @@ async function processSellAccount(
         accessToken = await handleSellCheck(
           state,
           kisClient, appKey, appSecret, accessToken, accountNo,
-          chatId, scalpConfig.shadowMode
+          chatId, scalpConfig.shadowMode, ctx
         );
       } catch (err) {
         if (isTokenExpiredError(err)) {
           accessToken = await getOrRefreshToken(
-            userId, accountId, credentials, kisClient, true
+            '', accountId, credentials, kisClient, true
           );
         }
         console.error(`[QuickScalp-Sell] SellCheck error ${state.ticker}:`, err);
@@ -965,7 +990,8 @@ async function handleSellCheck(
   accessToken: string,
   accountNo: string,
   chatId: string | null,
-  shadowMode = false
+  shadowMode = false,
+  ctx?: AccountContext
 ): Promise<string> {
   const { ticker, stockName, entryPrice, entryQuantity, targetPrice, stopLossPrice } = state;
 
@@ -1058,7 +1084,7 @@ async function handleSellCheck(
       targetTicks: state.targetTicks,
       bestBidAtExit: bidPrice,
       currentPriceAtExit: currentPrice,
-    });
+    }, ctx);
 
     deleteMomentumScalpState(ticker);
     console.log(`👻 [QuickScalp-Shadow] ${ticker} 가상 ${exitReason}: ${profitRate}% (${profitAmount.toLocaleString()}원) exit@${exitPrice.toLocaleString()}`);
@@ -1066,7 +1092,7 @@ async function handleSellCheck(
   }
 
   // ── 실전 모드: 매도 주문 — 최대 3회 재시도 ──
-  const { userId, accountId } = config;
+  const accountId = ctx?.accountId ?? config.accountId;
   for (let attempt = 1; attempt <= SELL_API_MAX_RETRIES; attempt++) {
     try {
       const sellResult = await kisClient.submitDomesticOrder(
@@ -1110,7 +1136,7 @@ async function handleSellCheck(
 
       if (isTokenExpiredError(err)) {
         accessToken = await getOrRefreshToken(
-          userId, accountId,
+          '', accountId,
           { appKey, appSecret },
           kisClient, true
         );
@@ -1138,7 +1164,8 @@ async function handlePendingSell(
   accessToken: string,
   accountNo: string,
   todayStr: string,
-  chatId: string | null
+  chatId: string | null,
+  ctx?: AccountContext
 ): Promise<string> {
   const { ticker, stockName, sellOrderNo, sellExitReason, entryPrice, entryQuantity, allocatedAmount } = state;
 
@@ -1191,7 +1218,7 @@ async function handlePendingSell(
         spreadTicks: state.spreadTicks,
         targetTicks: state.targetTicks,
         bestBidAtExit: state.bestBidAtExit,
-      });
+      }, ctx);
     }
 
     deleteMomentumScalpState(ticker);
@@ -1271,7 +1298,7 @@ async function handlePendingSell(
 // forceStopMomentumScalp
 // ========================================
 
-export async function forceStopMomentumScalp(ticker: string): Promise<{ success: boolean; message: string }> {
+export async function forceStopMomentumScalp(ticker: string, ctx?: AccountContext): Promise<{ success: boolean; message: string }> {
   if (!ticker) {
     return { success: false, message: 'ticker 필수' };
   }
@@ -1282,12 +1309,14 @@ export async function forceStopMomentumScalp(ticker: string): Promise<{ success:
       return { success: false, message: `${ticker} 보유 종목이 없습니다` };
     }
 
-    const { userId, accountId } = config;
-    const kisClient = new KisApiClient(config.kis.paperTrading);
-    const credentials = { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
-    const accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
-    const { appKey, appSecret } = config.kis;
-    const accountNo = config.kis.accountNo;
+    const credentials = ctx
+      ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
+      : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
+    const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+    const accountNo = ctx?.credentials.accountNo ?? config.kis.accountNo;
+    const accountId = ctx?.accountId ?? config.accountId;
+    const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
+    const { appKey, appSecret } = credentials;
 
     if (state.status === 'active' && state.entryQuantity && state.entryQuantity > 0) {
       // 시장가 매도
@@ -1325,7 +1354,7 @@ export async function forceStopMomentumScalp(ticker: string): Promise<{ success:
           boxRangePct: state.boxRangePct,
           spreadTicks: state.spreadTicks,
           targetTicks: state.targetTicks,
-        });
+        }, ctx);
       }
     } else if (state.status === 'pending_sell' && state.entryQuantity && state.entryQuantity > 0) {
       // 기존 매도 주문 취소 → 시장가 매도
@@ -1376,7 +1405,7 @@ export async function forceStopMomentumScalp(ticker: string): Promise<{ success:
           spreadTicks: state.spreadTicks,
           targetTicks: state.targetTicks,
           bestBidAtExit: state.bestBidAtExit,
-        });
+        }, ctx);
       }
     } else if (state.status === 'pending_buy' && state.pendingOrderNo) {
       try {
@@ -1391,7 +1420,7 @@ export async function forceStopMomentumScalp(ticker: string): Promise<{ success:
 
     deleteMomentumScalpState(ticker);
 
-    const chatId = await getUserTelegramChatId(userId);
+    const chatId = await getUserTelegramChatId(config.userId);
     if (chatId) {
       await sendTelegramMessage(chatId,
         `⚠️ <b>[스캘핑] ${state.stockName || ticker} 강제 청산</b>`,
@@ -1506,7 +1535,8 @@ function parseDomesticMinuteBars(
 
 async function sendAlert(
   title: string,
-  detail: string
+  detail: string,
+  _ctx?: AccountContext
 ): Promise<void> {
   try {
     const chatId = await getUserTelegramChatId(config.userId);

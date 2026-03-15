@@ -11,6 +11,7 @@ import {
   getOrRefreshToken,
   isTokenExpiredError,
 } from '../../lib/kisApi';
+import { AccountContext } from '../../lib/accountContext';
 import {
   type AccountStrategy,
   getMarketStrategyConfig,
@@ -705,17 +706,20 @@ export async function forceStopRealtimeDdsobV2Ticker(
   market: MarketType,
   reason: 'force_stop' | 'auto_stop_loss' | 'exhaustion_stop_loss' | 'force_sell_candles' = 'force_stop',
   strategyId: AccountStrategy = 'realtimeDdsobV2',
+  ctx?: AccountContext,
 ): Promise<{ success: boolean; soldQty: number; message: string }> {
   const tag = market === 'domestic' ? 'KR' : 'US';
   console.log(`[ForceStop:${tag}] ticker=${ticker}`);
 
   // 1. credentials & accessToken
-  const credentials = localStore.getCredentials<{ appKey: string; appSecret: string; accountNo: string }>();
+  const credentials = ctx
+    ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
+    : localStore.getCredentials<{ appKey: string; appSecret: string; accountNo: string }>();
   if (!credentials) {
     return { success: false, soldQty: 0, message: '자격증명을 찾을 수 없습니다' };
   }
-  const kisClient = new KisApiClient(false);
-  let accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const kisClient = ctx?.kisClient ?? new KisApiClient(false);
+  let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
 
   // 2. state 조회
   const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
@@ -762,7 +766,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   } catch (err) {
     if (isTokenExpiredError(err)) {
       console.log(`[ForceStop:${tag}] Token expired, refreshing...`);
-      accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
+      accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
     } else {
       console.error(`[ForceStop:${tag}] Unfilled cleanup error:`, err);
     }
@@ -876,7 +880,8 @@ export async function processRealtimeDdsobV2Trading(
   tickerConfig: RealtimeDdsobV2TickerConfig,
   globalConfig: Record<string, unknown>,
   market: MarketType,
-  options?: { sellOnly?: boolean; strategyId?: AccountStrategy }
+  options?: { sellOnly?: boolean; strategyId?: AccountStrategy },
+  ctx?: AccountContext,
 ): Promise<void> {
   const strategyId: AccountStrategy = options?.strategyId || 'realtimeDdsobV2';
   const sellOnly = options?.sellOnly ?? false;
@@ -889,13 +894,15 @@ export async function processRealtimeDdsobV2Trading(
   console.log(`[RealtimeDdsobV2:${tag}] Processing ${userId}/${accountId} ticker=${ticker} interval=${intervalMinutes}min${sellOnly ? ' [SELL-ONLY]' : ''}`);
 
   // 자격증명 & 토큰
-  const credentials = localStore.getCredentials<{ appKey: string; appSecret: string; accountNo: string }>();
+  const credentials = ctx
+    ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
+    : localStore.getCredentials<{ appKey: string; appSecret: string; accountNo: string }>();
   if (!credentials) {
     console.log(`[RealtimeDdsobV2:${tag}] No credentials found`);
     return;
   }
-  const kisClient = new KisApiClient(false);
-  let accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+  const kisClient = ctx?.kisClient ?? new KisApiClient(false);
+  let accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient);
   const chatId = await getUserTelegramChatId(userId);
 
   // 해외 거래소 코드
@@ -954,7 +961,7 @@ export async function processRealtimeDdsobV2Trading(
   } catch (err) {
     if (isTokenExpiredError(err)) {
       console.log(`[RealtimeDdsobV2:${tag}] Token expired in step 0, refreshing...`);
-      accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient, true);
+      accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient, true);
     } else {
       console.error(`[RealtimeDdsobV2:${tag}] Error in unfilled order cleanup:`, err);
     }
@@ -1290,7 +1297,7 @@ export async function processRealtimeDdsobV2Trading(
       if (isTokenExpiredError(histErr)) {
         console.log(`[RealtimeDdsobV2:${tag}] Token expired in fill check, refreshing and retrying...`);
         try {
-          accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient, true);
+          accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient, true);
           const queryStartDate = (state!.lastOrderDate as string) || todayStr;
           if (market === 'overseas') {
             const retryResp = await kisClient.getOrderHistory(
@@ -1341,7 +1348,7 @@ export async function processRealtimeDdsobV2Trading(
     } catch (priceErr) {
       if (isTokenExpiredError(priceErr)) {
         console.log(`[RealtimeDdsobV2:${tag}] Token expired at getCurrentPrice, refreshing and retrying...`);
-        accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient, true);
+        accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient, true);
         const retryData = await kisClient.getCurrentPrice(
           credentials.appKey, credentials.appSecret, accessToken, ticker, quoteExcd
         );
@@ -1562,7 +1569,7 @@ export async function processRealtimeDdsobV2Trading(
       console.log(`[RealtimeDdsobV2:${tag}] KIS holdings: ${ticker} avgPrice=${fp(kisAvgPrice)}, qty=${kisHoldingQty}`);
     } catch (balanceErr) {
       if (isTokenExpiredError(balanceErr)) {
-        accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient, true);
+        accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient, true);
         try {
           if (market === 'overseas') {
             const balanceData = await kisClient.getBalance(
@@ -1817,7 +1824,7 @@ export async function processRealtimeDdsobV2Trading(
       if (isTokenExpiredError(err)) {
         console.log(`[RealtimeDdsobV2:${tag}] Token expired at sell order, refreshing and retrying...`);
         try {
-          accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient, true);
+          accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient, true);
           await new Promise(resolve => setTimeout(resolve, 300));
           const retryResult = market === 'overseas'
             ? await kisClient.submitOrder(credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
@@ -1901,7 +1908,7 @@ export async function processRealtimeDdsobV2Trading(
       if (isTokenExpiredError(err)) {
         console.log(`[RealtimeDdsobV2:${tag}] Token expired at buy order, refreshing and retrying...`);
         try {
-          accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient, true);
+          accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient, true);
           await new Promise(resolve => setTimeout(resolve, 300));
           const retryResult = market === 'overseas'
             ? await kisClient.submitOrder(credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,

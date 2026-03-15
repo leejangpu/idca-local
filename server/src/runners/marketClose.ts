@@ -9,6 +9,7 @@
 import { config } from '../config';
 import * as localStore from '../lib/localStore';
 import { KisApiClient, getOrRefreshToken } from '../lib/kisApi';
+import { AccountContext } from '../lib/accountContext';
 import { sendTelegramMessage, getUserTelegramChatId } from '../lib/telegram';
 import { generateBuyRecordId, BuyRecord } from '../lib/ddsobCalculator';
 import { markFilledOrders } from '../lib/vrCalculator';
@@ -110,7 +111,7 @@ async function notifyCycleCompleted(
 
 // --- 메인 처리 함수 ---
 
-async function processMarketClose(market: MarketType) {
+async function processMarketClose(market: MarketType, ctx?: AccountContext) {
   const marketLabel = market === 'overseas' ? '미국' : '한국';
   console.log(`Market close trigger started (${marketLabel})`);
 
@@ -213,17 +214,15 @@ async function processMarketClose(market: MarketType) {
 
     // --- 사이클 데이터 동기화 (KIS API 실제 보유 정보 기반) ---
     try {
-      const credentials = {
-        appKey: config.kis.appKey,
-        appSecret: config.kis.appSecret,
-        accountNo: config.kis.accountNo,
-      };
+      const credentials = ctx
+        ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
+        : { appKey: config.kis.appKey, appSecret: config.kis.appSecret, accountNo: config.kis.accountNo };
 
-      accountSummary.nickname = '로컬계좌';
+      accountSummary.nickname = ctx?.nickname ?? '로컬계좌';
       accountSummary.accountNo = credentials.accountNo;
 
-      const kisClient = new KisApiClient(config.kis.paperTrading);
-      const accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
+      const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+      const accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient);
 
       // --- 잔고 조회 (market별 분기) ---
       let holdingsArray: any[];
@@ -1139,10 +1138,10 @@ async function processMarketClose(market: MarketType) {
 
 // --- 내보내기 함수 ---
 
-export async function runMarketCloseKR(): Promise<void> {
-  await processMarketClose('domestic');
+export async function runMarketCloseKR(ctx?: AccountContext): Promise<void> {
+  await processMarketClose('domestic', ctx);
 }
 
-export async function runMarketCloseUS(): Promise<void> {
-  await processMarketClose('overseas');
+export async function runMarketCloseUS(ctx?: AccountContext): Promise<void> {
+  await processMarketClose('overseas', ctx);
 }

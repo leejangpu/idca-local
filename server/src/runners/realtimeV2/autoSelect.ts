@@ -6,6 +6,7 @@
 import { config } from '../../config';
 import * as localStore from '../../lib/localStore';
 import { KisApiClient, getOrRefreshToken, isTokenExpiredError } from '../../lib/kisApi';
+import { AccountContext } from '../../lib/accountContext';
 import {
   getCommonConfig,
   getMarketStrategyConfig,
@@ -15,6 +16,7 @@ import {
   type MarketType,
 } from '../../lib/configHelper';
 import { sendTelegramMessage, getUserTelegramChatId } from '../../lib/telegram';
+import { getOccupiedTickersExcluding } from '../../lib/activeTickerRegistry';
 import { getAscendingMaxPrice } from '../../lib/realtimeDdsobV2Calculator';
 import {
   getKRMarketHolidayName,
@@ -309,7 +311,13 @@ async function applyIndicatorFiltersUS(
 
 // ==================== 자격증명 헬퍼 ====================
 
-function getCredentialsAndClient(): { credentials: { appKey: string; appSecret: string; accountNo: string }; kisClient: KisApiClient } {
+function getCredentialsAndClient(ctx?: AccountContext): { credentials: { appKey: string; appSecret: string; accountNo: string }; kisClient: KisApiClient } {
+  if (ctx) {
+    return {
+      credentials: { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo },
+      kisClient: ctx.kisClient,
+    };
+  }
   return {
     credentials: {
       appKey: config.kis.appKey,
@@ -326,10 +334,10 @@ function getCredentialsAndClient(): { credentials: { appKey: string; appSecret: 
  * HTS 조건검색 목록 조회
  * 원본: getConditionListV2 (HTTP endpoint) → 단일 사용자 plain function
  */
-export async function getConditionList(htsUserId: string): Promise<ConditionItem[]> {
-  const { credentials, kisClient } = getCredentialsAndClient();
+export async function getConditionList(htsUserId: string, ctx?: AccountContext): Promise<ConditionItem[]> {
+  const { credentials, kisClient } = getCredentialsAndClient(ctx);
   const accessToken = await getOrRefreshToken(
-    config.userId, config.accountId,
+    '', ctx?.accountId ?? config.accountId,
     credentials, kisClient
   );
 
@@ -352,7 +360,7 @@ export async function getConditionList(htsUserId: string): Promise<ConditionItem
  * 수동 자동선별 트리거 (웹에서 매매활성화 ON 시 호출)
  * 원본: triggerAutoSelectStocksV2 (HTTP) → plain function
  */
-export async function triggerAutoSelectStocks(market: string): Promise<{ success: boolean; message: string }> {
+export async function triggerAutoSelectStocks(market: string, ctx?: AccountContext): Promise<{ success: boolean; message: string }> {
   const isUS = market === 'overseas';
   console.log(`[AutoSelect:Manual:${isUS ? 'US' : 'KR'}] Triggered`);
 
@@ -380,7 +388,7 @@ export async function triggerAutoSelectStocks(market: string): Promise<{ success
     if (autoConfigV2_1.principalMode === 'manual' && !autoConfigV2_1.principalPerTicker) {
       throw new Error('종목당 투자금이 설정되지 않았습니다');
     }
-    await processAutoSelectStocksV2_1US(autoConfigV2_1, rdConfig as unknown as Record<string, unknown>);
+    await processAutoSelectStocksV2_1US(autoConfigV2_1, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
     return { success: true, message: 'v2.1 해외 지표 자동선별이 완료되었습니다' };
   }
 
@@ -397,7 +405,7 @@ export async function triggerAutoSelectStocks(market: string): Promise<{ success
     if (autoConfigUS.principalMode === 'manual' && !autoConfigUS.principalPerTicker) {
       throw new Error('종목당 투자금이 설정되지 않았습니다');
     }
-    await processAutoSelectStocksUS(autoConfigUS, rdConfig as unknown as Record<string, unknown>);
+    await processAutoSelectStocksUS(autoConfigUS, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
     return { success: true, message: '해외 자동 종목선정이 완료되었습니다' };
   }
 
@@ -412,7 +420,7 @@ export async function triggerAutoSelectStocks(market: string): Promise<{ success
   if (autoConfig.principalMode === 'manual' && !autoConfig.principalPerTicker) {
     throw new Error('종목당 투자금이 설정되지 않았습니다');
   }
-  await processAutoSelectStocks(autoConfig, rdConfig as unknown as Record<string, unknown>);
+  await processAutoSelectStocks(autoConfig, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
   return { success: true, message: '자동 종목선정이 완료되었습니다' };
 }
 
@@ -420,7 +428,7 @@ export async function triggerAutoSelectStocks(market: string): Promise<{ success
  * 인기종목 자동선별 스케줄러 (국내) — 09:20 KST
  * 원본: autoSelectTopStocksTriggerKRV2 (onSchedule)
  */
-export async function runAutoSelectKR(): Promise<void> {
+export async function runAutoSelectKR(ctx?: AccountContext): Promise<void> {
   console.log('[AutoSelect:KR] Trigger started');
 
   const now = new Date();
@@ -444,7 +452,7 @@ export async function runAutoSelectKR(): Promise<void> {
     if (!autoConfig) return;
     if (autoConfig.principalMode === 'manual' && !autoConfig.principalPerTicker) return;
 
-    await processAutoSelectStocks(autoConfig, rdConfig as unknown as Record<string, unknown>);
+    await processAutoSelectStocks(autoConfig, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
 
     console.log('[AutoSelect:KR] Trigger completed');
   } catch (error) {
@@ -456,7 +464,7 @@ export async function runAutoSelectKR(): Promise<void> {
  * 실사오팔v2 해외 인기종목 자동선별 스케줄러 — 09:35 ET
  * 원본: autoSelectTopStocksTriggerUSV2 (onSchedule)
  */
-export async function runAutoSelectUS(): Promise<void> {
+export async function runAutoSelectUS(ctx?: AccountContext): Promise<void> {
   console.log('[AutoSelect:US] Trigger started');
 
   // 휴장일 확인
@@ -489,14 +497,14 @@ export async function runAutoSelectUS(): Promise<void> {
       const autoConfigV2_1 = rdConfig.autoSelectConfigUS;
       if (!autoConfigV2_1) return;
       if (autoConfigV2_1.principalMode === 'manual' && !autoConfigV2_1.principalPerTicker) return;
-      await processAutoSelectStocksV2_1US(autoConfigV2_1, rdConfig as unknown as Record<string, unknown>);
+      await processAutoSelectStocksV2_1US(autoConfigV2_1, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
     } else {
       const rdConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
       if (!rdConfig?.autoSelectEnabled) return;
       const autoConfigUS = rdConfig.autoSelectConfig as unknown as AutoSelectConfigUS;
       if (!autoConfigUS) return;
       if (autoConfigUS.principalMode === 'manual' && !autoConfigUS.principalPerTicker) return;
-      await processAutoSelectStocksUS(autoConfigUS, rdConfig as unknown as Record<string, unknown>);
+      await processAutoSelectStocksUS(autoConfigUS, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
     }
 
     console.log('[AutoSelect:US] Trigger completed');
@@ -510,7 +518,8 @@ export async function runAutoSelectUS(): Promise<void> {
 export async function processAutoSelectStocks(
   autoConfig: AutoSelectConfig,
   rdConfig: Record<string, unknown>,
-  options?: { mode?: 'full' | 'refill' }
+  options?: { mode?: 'full' | 'refill' },
+  ctx?: AccountContext,
 ): Promise<RealtimeDdsobV2TickerConfig[]> {
   const mode = options?.mode || 'full';
   const { stockCount, splitCount, selectionMode, maxStockPrice, principalMode } = autoConfig;
@@ -522,14 +531,16 @@ export async function processAutoSelectStocks(
   console.log(`[AutoSelect] Processing: mode=${selectionMode}, count=${stockCount}, principalMode=${principalMode}, includeETF=${includeETF}`);
 
   // 자격증명 & 토큰
-  const { credentials, kisClient } = getCredentialsAndClient();
-  let accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const { credentials, kisClient } = getCredentialsAndClient(ctx);
+  let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
 
   // 기존 종목 확인 (중복 방지 + 빈 슬롯 계산)
   const existingTickers = extractTickerConfigsV2(rdConfig);
   const manualTickers = new Set(existingTickers.filter(t => !t.autoSelected).map(t => t.ticker));
   const existingAutoTickers = existingTickers.filter(t => t.autoSelected && t.market === 'domestic');
   const excludeTickers = new Set([...Array.from(manualTickers), ...(mode === 'refill' ? existingAutoTickers.map(t => t.ticker) : [])]);
+  // 다른 전략이 점유 중인 종목 제외
+  for (const t of getOccupiedTickersExcluding('domestic', 'realtimeDdsobV2')) excludeTickers.add(t);
   const slotsToFill = mode === 'refill' ? stockCount - existingAutoTickers.length : stockCount;
 
   if (slotsToFill <= 0) {
@@ -550,7 +561,7 @@ export async function processAutoSelectStocks(
   } catch (err) {
     if (isTokenExpiredError(err)) {
       console.log(`[AutoSelect] Token expired, refreshing and retrying...`);
-      accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
+      accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
       balanceResp = await kisClient.getDomesticBalance(
         credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo
       );
@@ -851,7 +862,8 @@ export async function processAutoSelectStocks(
 export async function processAutoSelectStocksUS(
   autoConfigUS: AutoSelectConfigUS,
   rdConfig: Record<string, unknown>,
-  options?: { mode?: 'full' | 'refill' }
+  options?: { mode?: 'full' | 'refill' },
+  ctx?: AccountContext,
 ): Promise<RealtimeDdsobV2TickerConfig[]> {
   const mode = options?.mode || 'full';
   const { stockCount, principalMode } = autoConfigUS;
@@ -859,14 +871,15 @@ export async function processAutoSelectStocksUS(
   console.log(`[AutoSelect:US] Processing: mode=${mode}, count=${stockCount}, principalMode=${principalMode}`);
 
   // 자격증명 & 토큰
-  const { credentials, kisClient } = getCredentialsAndClient();
-  let accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const { credentials, kisClient } = getCredentialsAndClient(ctx);
+  let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
 
   // 기존 종목 확인 (중복 방지)
   const existingTickers = extractTickerConfigsV2(rdConfig);
   const manualTickers = new Set(existingTickers.filter((t: RealtimeDdsobV2TickerConfig) => !t.autoSelected && t.market === 'overseas').map((t: RealtimeDdsobV2TickerConfig) => t.ticker));
   const existingAutoTickers = existingTickers.filter((t: RealtimeDdsobV2TickerConfig) => t.autoSelected && t.market === 'overseas');
   const excludeTickers = new Set([...Array.from(manualTickers), ...(mode === 'refill' ? existingAutoTickers.map(t => t.ticker) : [])]);
+  for (const t of getOccupiedTickersExcluding('overseas', 'realtimeDdsobV2')) excludeTickers.add(t);
 
   const slotsToFill = mode === 'refill' ? stockCount - existingAutoTickers.length : stockCount;
 
@@ -907,7 +920,7 @@ export async function processAutoSelectStocksUS(
     } catch (err) {
       if (!tokenRefreshed && isTokenExpiredError(err)) {
         console.log(`[AutoSelect:US] Token expired, refreshing and retrying...`);
-        accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
+        accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
         tokenRefreshed = true;
         try {
           const retryResp = await kisClient.getOverseasTradingAmountRanking(
@@ -950,7 +963,7 @@ export async function processAutoSelectStocksUS(
   } catch (err) {
     if (!tokenRefreshed && isTokenExpiredError(err)) {
       console.log(`[AutoSelect:US] Token expired at getBuyableAmount, refreshing and retrying...`);
-      accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
+      accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
       tokenRefreshed = true;
       buyableResp = await kisClient.getBuyableAmount(
         credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
@@ -1092,7 +1105,8 @@ export async function processAutoSelectStocksUS(
 export async function processAutoSelectStocksV2_1US(
   autoConfig: AutoSelectConfigV2_1,
   rdConfig: Record<string, unknown>,
-  options?: { mode?: 'full' | 'refill' }
+  options?: { mode?: 'full' | 'refill' },
+  ctx?: AccountContext,
 ): Promise<RealtimeDdsobV2TickerConfig[]> {
   const mode = options?.mode || 'full';
   const { stockCount, principalMode } = autoConfig;
@@ -1100,14 +1114,15 @@ export async function processAutoSelectStocksV2_1US(
   console.log(`[AutoSelect:V2.1:US] Processing: mode=${mode}, count=${stockCount}, principalMode=${principalMode}`);
 
   // 자격증명 & 토큰
-  const { credentials, kisClient } = getCredentialsAndClient();
-  let accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const { credentials, kisClient } = getCredentialsAndClient(ctx);
+  let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
 
   // 기존 종목 확인 (중복 방지)
   const existingTickers = extractTickerConfigsV2(rdConfig);
   const manualTickers = new Set(existingTickers.filter((t: RealtimeDdsobV2TickerConfig) => !t.autoSelected && t.market === 'overseas').map((t: RealtimeDdsobV2TickerConfig) => t.ticker));
   const existingAutoTickers = existingTickers.filter((t: RealtimeDdsobV2TickerConfig) => t.autoSelected && t.market === 'overseas');
   const excludeTickers = new Set([...Array.from(manualTickers), ...(mode === 'refill' ? existingAutoTickers.map(t => t.ticker) : [])]);
+  for (const t of getOccupiedTickersExcluding('overseas', 'realtimeDdsobV2_1')) excludeTickers.add(t);
 
   const slotsToFill = mode === 'refill' ? stockCount - existingAutoTickers.length : stockCount;
   if (slotsToFill <= 0) {
@@ -1143,7 +1158,7 @@ export async function processAutoSelectStocksV2_1US(
       }
     } catch (err) {
       if (!tokenRefreshed && isTokenExpiredError(err)) {
-        accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
+        accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
         tokenRefreshed = true;
         try {
           const retryResp = await kisClient.getOverseasTradingAmountRanking(
@@ -1183,7 +1198,7 @@ export async function processAutoSelectStocksV2_1US(
     );
   } catch (err) {
     if (!tokenRefreshed && isTokenExpiredError(err)) {
-      accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
+      accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
       tokenRefreshed = true;
       buyableResp = await kisClient.getBuyableAmount(
         credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
@@ -1343,13 +1358,14 @@ export async function processAutoSelectEOD(
   eodTickers: RealtimeDdsobV2TickerConfig[],
   rdConfig: Record<string, unknown>,
   market: MarketType = 'domestic',
-  strategyId: AccountStrategy = 'realtimeDdsobV2'
+  strategyId: AccountStrategy = 'realtimeDdsobV2',
+  ctx?: AccountContext,
 ): Promise<void> {
   const tag = market === 'domestic' ? 'KR' : 'US';
   console.log(`[EOD:${tag}] Processing: ${eodTickers.length} tickers`);
 
-  const { credentials, kisClient } = getCredentialsAndClient();
-  let accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
+  const { credentials, kisClient } = getCredentialsAndClient(ctx);
+  let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
   const chatId = await getUserTelegramChatId();
   const todayKST = getKSTDateString();
   const currencyUnit = market === 'domestic' ? '원' : '$';
@@ -1574,7 +1590,7 @@ export async function processAutoSelectEOD(
     } catch (err) {
       if (!eodTokenRefreshed && isTokenExpiredError(err)) {
         console.log(`[EOD:${tag}] Token expired at ${ticker}, refreshing and retrying...`);
-        accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
+        accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
         eodTokenRefreshed = true;
         eodIdx--;
         continue;

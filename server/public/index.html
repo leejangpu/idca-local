@@ -163,6 +163,62 @@
       animation: spin 0.8s linear infinite; margin: 0 auto 12px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Checkbox group for multi-strategy */
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+    .checkbox-pill {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 8px; font-size: 0.82em; font-weight: 500;
+      cursor: pointer; border: 1px solid var(--border); background: var(--surface2);
+      transition: 0.2s; user-select: none;
+    }
+    .checkbox-pill input { display: none; }
+    .checkbox-pill.checked { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* Strategy detail accordion */
+    .strat-panel { margin-top: 12px; }
+    .strat-panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); cursor: pointer; font-size: 0.85em; font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .strat-panel-header:hover { border-color: var(--accent); }
+
+    /* Account selector */
+    .account-bar {
+      display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;
+    }
+    .account-pill {
+      padding: 6px 14px; border-radius: 8px; font-size: 0.82em; font-weight: 500;
+      cursor: pointer; border: 1px solid var(--border); background: var(--surface2);
+      transition: 0.2s; user-select: none;
+    }
+    .account-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .account-pill:hover:not(.active) { border-color: var(--text2); }
+    .account-add {
+      padding: 6px 12px; border-radius: 8px; font-size: 0.82em; font-weight: 500;
+      cursor: pointer; border: 1px dashed var(--border); background: transparent;
+      color: var(--text2); transition: 0.2s;
+    }
+    .account-add:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      width: 90%; max-width: 420px; padding: 24px; position: relative;
+    }
+    .modal h3 { font-size: 1em; font-weight: 700; margin-bottom: 16px; }
+    .modal-field { margin-bottom: 12px; }
+    .modal-field label { display: block; font-size: 0.8em; color: var(--text2); margin-bottom: 4px; }
+    .modal-field .input { width: 100%; text-align: left; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+    .btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--text); color: var(--text); }
   </style>
 </head>
 <body>
@@ -172,12 +228,16 @@
       <span id="master-badge" class="badge badge-off">OFF</span>
     </header>
     <div id="toast" class="toast"></div>
+    <div id="modal-root"></div>
     <div id="app"><div class="loading"><div class="spinner"></div>로딩 중...</div></div>
   </div>
 
   <script>
     const API = '/config';
     let C = {}; // allConfig
+    const API_ACCOUNTS = '/accounts';
+    let accounts = [];        // AccountRegistryEntry[]
+    let currentAccountId = null;
 
     // ==================== Helpers ====================
     function $(id) { return document.getElementById(id); }
@@ -193,21 +253,81 @@
     function fromPct(v) { return num(v) / 100; }
 
     // ==================== API ====================
+    async function loadAccounts() {
+      try {
+        const res = await fetch(API_ACCOUNTS);
+        const data = await res.json();
+        accounts = data.accounts || [];
+        if (!currentAccountId && accounts.length > 0) {
+          currentAccountId = data.defaultAccountId || accounts[0].id;
+        }
+      } catch (e) {
+        accounts = [];
+      }
+    }
+
     async function load() {
-      const res = await fetch(API);
+      await loadAccounts();
+      if (!currentAccountId) {
+        $('app').innerHTML = '<div class="empty">등록된 계좌가 없습니다. 계좌를 추가하세요.</div>';
+        renderAccountBar();
+        return;
+      }
+      const res = await fetch(`${API}/account/${currentAccountId}`);
       C = await res.json();
       render();
     }
     async function saveTrading(data) {
-      await fetch(`${API}/trading`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+      await fetch(`${API}/account/${currentAccountId}/trading`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
     }
     async function saveStrategy(market, strategy, data) {
-      await fetch(`${API}/${market}/${strategy}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+      await fetch(`${API}/account/${currentAccountId}/${market}/${strategy}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    }
+
+    // HTS 조건검색 목록 캐시
+    let conditionList = null; // [{seq, condition_nm, grp_nm}, ...]
+    let conditionLoading = false;
+
+    async function loadConditionList() {
+      if (conditionList) return conditionList;
+      if (conditionLoading) return null;
+      conditionLoading = true;
+      try {
+        const res = await fetch(`${API}/account/${currentAccountId}/kis/condition-list`);
+        const data = await res.json();
+        if (data.output2) {
+          conditionList = data.output2;
+        } else {
+          toast('조건검색 목록 조회 실패: ' + (data.error || data.msg1 || ''), 'error');
+          conditionList = [];
+        }
+      } catch (e) {
+        toast('조건검색 API 호출 실패', 'error');
+        conditionList = [];
+      }
+      conditionLoading = false;
+      return conditionList;
     }
 
     // ==================== State ====================
     let activeMarket = 'domestic';
-    let activeStrategyTab = null; // 'basic' | 'autoSelect' | 'autoSelectUS' | 'autoSelectCrypto'
+    let activeStrategyTab = null; // 'basic' | 'autoSelect' | 'autoSelectUS' | 'autoSelectCrypto' | 'global' | 'tickers'
+
+    // ==================== Account Bar ====================
+    function renderAccountBar() {
+      const bar = accounts.map(a =>
+        `<div class="account-pill ${a.id === currentAccountId ? 'active' : ''}" onclick="switchAccount('${a.id}')">${a.nickname || a.id}</div>`
+      ).join('');
+      const addBtn = `<div class="account-add" onclick="showAddAccountModal()">+ 추가</div>`;
+      const manageBtn = currentAccountId ? `<div class="account-add" onclick="showEditAccountModal('${currentAccountId}')">설정</div>` : '';
+      return `<div class="account-bar">${bar}${addBtn}${manageBtn}</div>`;
+    }
+
+    async function switchAccount(id) {
+      currentAccountId = id;
+      conditionList = null; // reset condition cache
+      await load();
+    }
 
     // ==================== Render Main ====================
     function render() {
@@ -219,6 +339,7 @@
       const ov = t.overseas || {};
 
       $('app').innerHTML = `
+        ${renderAccountBar()}
         <!-- Master Controls -->
         <div class="section">
           <div class="section-title">기본 설정</div>
@@ -241,73 +362,125 @@
           </div>
         </div>
 
-        <!-- Strategy Detail -->
+        <!-- Strategy Details -->
         <div id="strategy-section"></div>
+
       `;
 
-      const currentStrategy = activeMarket === 'domestic' ? dm.strategy : ov.strategy;
-      if (currentStrategy) renderStrategyDetail(activeMarket, currentStrategy);
+      // 활성 전략별 상세 설정 렌더
+      const mc = activeMarket === 'domestic' ? dm : ov;
+      const activeStrats = mc.strategies || (mc.strategy ? [mc.strategy] : []);
+      if (mc.swingEnabled && !activeStrats.includes('swing')) activeStrats.push('swing');
+      renderMultiStrategyDetail(activeMarket, activeStrats);
+    }
+
+    function renderMultiStrategyDetail(market, strategies) {
+      const el = $('strategy-section');
+      if (!strategies || strategies.length === 0) { el.innerHTML = ''; return; }
+      el.innerHTML = strategies.map(s => {
+        const data = C.strategies?.[market]?.[s];
+        if (!data) return '';
+        const label = STRAT_LABELS[s] || s;
+        const isOpen = openPanels.has(market + ':' + s);
+        return `
+          <div class="strat-panel">
+            <div class="strat-panel-header" onclick="togglePanel('${market}','${s}')">
+              <span>${label}</span>
+              <span style="color:var(--text2)">${isOpen ? '▲' : '▼'}</span>
+            </div>
+            ${isOpen ? `<div>${renderStrategyContent(market, s, data)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    const openPanels = new Set();
+    function togglePanel(market, strategy) {
+      const key = market + ':' + strategy;
+      if (openPanels.has(key)) openPanels.delete(key); else openPanels.add(key);
+      const mc = C.trading?.[market] || {};
+      const activeStrats = mc.strategies || (mc.strategy ? [mc.strategy] : []);
+      if (mc.swingEnabled && !activeStrats.includes('swing')) activeStrats.push('swing');
+      renderMultiStrategyDetail(market, activeStrats);
     }
 
     // ==================== Market Renderers ====================
+    const STRAT_LABELS = { momentumScalp:'모멘텀 스캘핑', realtimeDdsobV2:'실시간 매수매도 v2', realtimeDdsobV2_1:'실시간 매수매도 v2.1', infinite:'무한매수법', vr:'VR 리밸런싱', swing:'스윙' };
+
+    function strategyCheckboxes(market, allOptions, activeList) {
+      return `<div class="row">
+        <div class="row-left"><div class="row-label">전략 선택</div><div class="row-desc">복수 선택 가능</div></div>
+        <div class="row-right">
+          <div class="checkbox-group">
+            ${allOptions.map(([val, label]) => {
+              const checked = activeList.includes(val);
+              return `<div class="checkbox-pill ${checked ? 'checked' : ''}" data-market="${market}" data-strategy="${val}" onclick="handleStratPillClick(this)">
+                ${label}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function handleStratPillClick(el) {
+      const market = el.dataset.market;
+      const strategy = el.dataset.strategy;
+      const isCurrentlyChecked = el.classList.contains('checked');
+      onToggleStrategy(market, strategy, !isCurrentlyChecked, el);
+    }
+
     function renderDomestic(mc) {
-      const strategies = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실시간 매수매도 v2']];
+      const options = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실시간 매수매도 v2'],['swing','스윙']];
+      const activeList = mc.strategies || (mc.strategy ? [mc.strategy] : []);
+      if (mc.swingEnabled && !activeList.includes('swing')) activeList.push('swing');
       return `
         <div class="card">
           ${toggleRow('국내 시장 활성화', '', mc.enabled, "onToggleMarket('domestic',this)")}
-          ${selectRow('전략 선택', strategies, mc.strategy, "onChangeStrategy('domestic',this.value)")}
-          ${toggleRow('스윙 활성화', '스윙 매매 병행', mc.swingEnabled, "onToggleSwing(this)")}
+          ${strategyCheckboxes('domestic', options, activeList)}
         </div>
       `;
     }
 
     function renderOverseas(mc) {
-      const strategies = [['infinite','무한매수법'],['vr','VR 리밸런싱'],['realtimeDdsobV2','실시간 매수매도 v2'],['realtimeDdsobV2_1','실시간 매수매도 v2.1']];
+      const options = [['infinite','무한매수법'],['vr','VR 리밸런싱'],['realtimeDdsobV2','실시간 매수매도 v2'],['realtimeDdsobV2_1','실시간 매수매도 v2.1']];
+      const activeList = mc.strategies || (mc.strategy ? [mc.strategy] : []);
       return `
         <div class="card">
           ${toggleRow('해외 시장 활성화', '', mc.enabled, "onToggleMarket('overseas',this)")}
-          ${selectRow('전략 선택', strategies, mc.strategy, "onChangeStrategy('overseas',this.value)")}
+          ${strategyCheckboxes('overseas', options, activeList)}
         </div>
       `;
     }
 
     // ==================== Strategy Detail Renderers ====================
-    function renderStrategyDetail(market, strategy) {
-      const data = C.strategies?.[market]?.[strategy];
-      if (!data) { $('strategy-section').innerHTML = ''; return; }
-
-      const label = { momentumScalp:'모멘텀 스캘핑', realtimeDdsobV2:'실시간 매수매도 v2', realtimeDdsobV2_1:'실시간 매수매도 v2.1', infinite:'무한매수법', vr:'VR 리밸런싱' }[strategy] || strategy;
-
-      let tabs = '';
-      let content = '';
-
-      if (strategy === 'momentumScalp') {
-        content = renderMomentumScalp(data, market);
-      } else if (strategy === 'vr') {
-        content = renderVR(data, market);
-      } else if (strategy === 'infinite') {
-        content = renderInfinite(data, market);
-      } else if (strategy.startsWith('realtimeDdsobV2')) {
+    function renderStrategyContent(market, strategy, data) {
+      if (strategy === 'swing') return renderSwing(data, market);
+      if (strategy === 'momentumScalp') return renderMomentumScalp(data, market);
+      if (strategy === 'vr') return renderVR(data, market);
+      if (strategy === 'infinite') return renderInfinite(data, market);
+      if (strategy.startsWith('realtimeDdsobV2')) {
         activeStrategyTab = activeStrategyTab || 'basic';
-        const hasCrypto = market === 'domestic';
-        tabs = `
+        const showKR = market === 'domestic' && data.autoSelectEnabled != null;
+        const showUS = market === 'overseas' && data.autoSelectEnabledUS != null;
+        const tabs = `
           <div class="subtabs">
             <button class="subtab ${activeStrategyTab==='basic'?'active':''}" onclick="switchStratTab('basic')">기본 설정</button>
-            ${data.autoSelectEnabled != null ? `<button class="subtab ${activeStrategyTab==='autoSelect'?'active':''}" onclick="switchStratTab('autoSelect')">자동선정 (국내)</button>` : ''}
-            ${data.autoSelectEnabledUS != null ? `<button class="subtab ${activeStrategyTab==='autoSelectUS'?'active':''}" onclick="switchStratTab('autoSelectUS')">자동선정 (미국)</button>` : ''}
-            ${hasCrypto && data.autoSelectEnabledCrypto != null ? `<button class="subtab ${activeStrategyTab==='autoSelectCrypto'?'active':''}" onclick="switchStratTab('autoSelectCrypto')">자동선정 (코인)</button>` : ''}
+            ${showKR ? `<button class="subtab ${activeStrategyTab==='autoSelect'?'active':''}" onclick="switchStratTab('autoSelect')">자동선정</button>` : ''}
+            ${showUS ? `<button class="subtab ${activeStrategyTab==='autoSelectUS'?'active':''}" onclick="switchStratTab('autoSelectUS')">자동선정</button>` : ''}
           </div>
         `;
-        content = renderRealtimeDdsob(data, market, strategy);
+        return tabs + renderRealtimeDdsob(data, market, strategy);
       }
+      return '';
+    }
 
-      $('strategy-section').innerHTML = `
-        <div class="section">
-          <div class="section-title">${label} 상세 설정</div>
-          ${tabs}
-          <div id="strategy-content">${content}</div>
-        </div>
-      `;
+    // legacy wrapper for switchStratTab
+    function renderStrategyDetail(market, strategy) {
+      const mc = C.trading?.[market] || {};
+      const activeStrats = mc.strategies || (mc.strategy ? [mc.strategy] : []);
+      if (mc.swingEnabled && !activeStrats.includes('swing')) activeStrats.push('swing');
+      renderMultiStrategyDetail(market, activeStrats);
     }
 
     // -- Momentum Scalp --
@@ -325,9 +498,12 @@
         </div>
         <div class="card" style="margin-top:8px">
           <div class="group-heading">HTS 조건검색</div>
-          ${textRow('HTS 사용자 ID', d.htsUserId, `onStratField('${market}','momentumScalp','htsUserId',this.value)`)}
-          ${textRow('조건식 이름', d.conditionName, `onStratField('${market}','momentumScalp','conditionName',this.value)`)}
-          ${textRow('조건식 번호', d.conditionSeq, `onStratField('${market}','momentumScalp','conditionSeq',this.value)`)}
+          ${conditionPickerRow(d.conditionSeq, d.conditionName, `function(el){
+            if(!el.value)return;
+            var parts=el.value.split('|');
+            onStratField('${market}','momentumScalp','conditionSeq',parts[0]);
+            onStratField('${market}','momentumScalp','conditionName',parts[1]);
+          }`)}
         </div>
         <div class="actions">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','momentumScalp')">저장</button>
@@ -407,7 +583,7 @@
           ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','${configKey}','profitPercent',this.value)`)}
           ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','forceSellCandles',this.value)`)}
           ${numberRow('캔들 간격 (분)', '', ac.intervalMinutes, `onAutoFieldNum('${market}','${strategy}','${configKey}','intervalMinutes',this.value)`)}
-          ${ac.selectionMode !== undefined ? selectRow('선정 모드', [['mixed','혼합'],['marketCapOnly','시가총액'],['volumeOnly','거래량'],['sideways','횡보'],['tradingAmount','거래대금']], ac.selectionMode, `onAutoField('${market}','${strategy}','${configKey}','selectionMode',this.value)`) : ''}
+          ${ac.selectionMode !== undefined ? selectRow('선정 모드', [['mixed','혼합'],['marketCapOnly','시가총액'],['volumeOnly','거래량'],['sideways','조건검색'],['tradingAmount','거래대금']], ac.selectionMode, `onAutoField('${market}','${strategy}','${configKey}','selectionMode',this.value); render()`) : ''}
           ${ac.maxStockPrice !== undefined ? numberRow('최대 주가', '', ac.maxStockPrice, `onAutoFieldNum('${market}','${strategy}','${configKey}','maxStockPrice',this.value)`) : ''}
           ${ac.minMarketCap !== undefined ? numberRow('최소 시가총액', '', ac.minMarketCap, `onAutoFieldNum('${market}','${strategy}','${configKey}','minMarketCap',this.value)`) : ''}
         </div>
@@ -422,11 +598,16 @@
           ${ac.ascendingSplit !== undefined ? toggleRow('상승 분할', '', ac.ascendingSplit, `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit',this.checked)`) : ''}
           ${ac.spreadFilterEnabled !== undefined ? toggleRow('스프레드 필터', '', ac.spreadFilterEnabled, `onAutoField('${market}','${strategy}','${configKey}','spreadFilterEnabled',this.checked)`) : ''}
         </div>
-        ${ac.htsUserId !== undefined ? `
+        ${ac.selectionMode === 'sideways' ? `
         <div class="card" style="margin-top:8px">
           <div class="group-heading">HTS 조건검색</div>
-          ${textRow('HTS 사용자 ID', ac.htsUserId, `onAutoField('${market}','${strategy}','${configKey}','htsUserId',this.value)`)}
-          ${textRow('조건식 이름', ac.conditionName, `onAutoField('${market}','${strategy}','${configKey}','conditionName',this.value)`)}
+          ${conditionPickerRow(ac.conditionSeq || ac.seq, ac.conditionName || ac.condition_nm, `function(el){
+            if(!el.value)return;
+            var parts=el.value.split('|');
+            onAutoField('${market}','${strategy}','${configKey}','conditionSeq',parts[0]);
+            onAutoField('${market}','${strategy}','${configKey}','conditionName',parts[1]);
+            onAutoField('${market}','${strategy}','${configKey}','htsUserId','${ac.htsUserId||''}');
+          }`)}
           ${ac.includeETF !== undefined ? toggleRow('ETF 포함', '', ac.includeETF, `onAutoField('${market}','${strategy}','${configKey}','includeETF',this.checked)`) : ''}
         </div>` : ''}
         <div class="actions">
@@ -479,6 +660,171 @@
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${strategy}')">저장</button>
         </div>
       `;
+    }
+
+    // -- Swing --
+    function renderSwing(d, market) {
+      const st = (activeStrategyTab === 'global' || activeStrategyTab === 'tickers') ? activeStrategyTab : 'global';
+      const hasTickers = d.tickers && d.tickers.length > 0;
+      return `
+        <div class="subtabs">
+          <button class="subtab ${st==='global'?'active':''}" onclick="activeStrategyTab='global';renderStrategyDetail('${market}','swing')">글로벌 설정</button>
+          <button class="subtab ${st==='tickers'?'active':''}" onclick="activeStrategyTab='tickers';renderStrategyDetail('${market}','swing')">종목 관리</button>
+        </div>
+        ${st === 'global' ? renderSwingGlobal(d, market) : renderSwingTickers(d, market)}
+      `;
+    }
+
+    function renderSwingGlobal(d, market) {
+      return `
+        <div class="card">
+          ${toggleRow('쉐도우 모드', '실제 주문 없이 로그만 기록 (시뮬레이션)', d.shadowMode, `onStratField('${market}','swing','shadowMode',this.checked)`)}
+        </div>
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">투자 한도</div>
+          ${numberRow('총 투자금', '스윙 전체 투자 한도 (원)', d.globalPrincipal, `onStratFieldNum('${market}','swing','globalPrincipal',this.value)`)}
+          ${numberRow('최대 포지션 수', '동시 보유 종목 수', d.maxPositions, `onStratFieldNum('${market}','swing','maxPositions',this.value)`)}
+        </div>
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">기본 익절 / 손절</div>
+          ${pctRow('익절 목표', '기본 목표 수익률', d.defaultProfitPercent, `onStratFieldPct('${market}','swing','defaultProfitPercent',this.value)`)}
+          ${pctRow('손절 라인', '기본 손절 비율 (음수)', d.defaultStopLossPercent, `onStratFieldPct('${market}','swing','defaultStopLossPercent',this.value)`)}
+        </div>
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">트레일링 스톱</div>
+          ${toggleRow('트레일링 스톱', 'ATR 기반 동적 손절선', d.trailingStopEnabled, `onStratField('${market}','swing','trailingStopEnabled',this.checked)`)}
+          ${pctRow('트레일링 비율', '고점 대비 하락 허용', d.trailingStopPercent, `onStratFieldPct('${market}','swing','trailingStopPercent',this.value)`)}
+        </div>
+        <div class="card" style="margin-top:8px">
+          <div class="group-heading">보유 기간</div>
+          ${numberRow('최대 보유일', '일', d.maxHoldingDays, `onStratFieldNum('${market}','swing','maxHoldingDays',this.value)`)}
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','swing')">저장</button>
+        </div>
+      `;
+    }
+
+    function renderSwingTickers(d, market) {
+      const tickers = d.tickers || [];
+      const tickerCards = tickers.map((t, i) => `
+        <div class="card" style="margin-top:${i > 0 ? '8px' : '0'}">
+          <div class="row">
+            <div class="row-left">
+              <div class="row-label" style="font-weight:700">${t.ticker} ${t.stockName ? '— ' + t.stockName : ''}</div>
+              ${t.memo ? `<div class="row-desc">${t.memo}</div>` : ''}
+            </div>
+            <div class="row-right">
+              <button class="btn btn-danger btn-sm" onclick="removeSwingTicker(${i})">삭제</button>
+            </div>
+          </div>
+          ${numberRow('투자금', '원', t.principal, `onSwingTickerField(${i},'principal',num(this.value))`)}
+          ${pctRow('익절 %', '', t.profitPercent, `onSwingTickerField(${i},'profitPercent',fromPct(this.value))`)}
+          ${pctRow('손절 %', '음수', t.stopLossPercent, `onSwingTickerField(${i},'stopLossPercent',fromPct(this.value))`)}
+          ${t.trailingStopPercent !== undefined ? pctRow('트레일링 %', '개별 설정', t.trailingStopPercent, `onSwingTickerField(${i},'trailingStopPercent',fromPct(this.value))`) : ''}
+          ${numberRow('추가매수 횟수', '최대', t.maxAdditionalBuys, `onSwingTickerField(${i},'maxAdditionalBuys',num(this.value))`)}
+          ${pctRow('추가매수 하락 %', '진입가 대비', t.additionalBuyDropPercent, `onSwingTickerField(${i},'additionalBuyDropPercent',fromPct(this.value))`)}
+          ${selectRow('진입 전략', [['ema_pullback','EMA 풀백'],['ema_breakout','EMA 돌파'],['rsi_oversold','RSI 과매도']], t.entryStrategy, `onSwingTickerField(${i},'entryStrategy',this.value)`)}
+          ${textRow('메모', t.memo, `onSwingTickerField(${i},'memo',this.value)`)}
+        </div>
+      `).join('');
+
+      return `
+        ${tickers.length === 0 ? '<div class="empty">등록된 종목이 없습니다</div>' : tickerCards}
+        <div class="card" style="margin-top:12px">
+          <div class="group-heading">종목 추가</div>
+          <div class="row">
+            <div class="row-left"><div class="row-label">티커</div></div>
+            <div class="row-right"><input class="input" type="text" id="swing-new-ticker" placeholder="005930"></div>
+          </div>
+          <div class="row">
+            <div class="row-left"><div class="row-label">종목명</div></div>
+            <div class="row-right"><input class="input" type="text" id="swing-new-name" placeholder="삼성전자"></div>
+          </div>
+          <div class="row">
+            <div class="row-left"><div class="row-label">투자금</div></div>
+            <div class="row-right"><input class="input input-sm" type="number" id="swing-new-principal" value="1000000"></div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-primary" onclick="addSwingTicker()">종목 추가</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','swing')">전체 저장</button>
+        </div>
+      `;
+    }
+
+    function onSwingTickerField(index, field, value) {
+      const s = getStrat('domestic', 'swing');
+      if (s.tickers && s.tickers[index]) {
+        s.tickers[index][field] = value;
+      }
+    }
+
+    function removeSwingTicker(index) {
+      const s = getStrat('domestic', 'swing');
+      if (s.tickers) {
+        s.tickers.splice(index, 1);
+        renderStrategyDetail('domestic', 'swing');
+      }
+    }
+
+    function addSwingTicker() {
+      const ticker = $('swing-new-ticker').value.trim();
+      const stockName = $('swing-new-name').value.trim();
+      const principal = num($('swing-new-principal').value, 1000000);
+      if (!ticker) { toast('티커를 입력하세요', 'error'); return; }
+
+      const s = getStrat('domestic', 'swing');
+      const d = s;
+      if (!s.tickers) s.tickers = [];
+      s.tickers.push({
+        ticker,
+        stockName: stockName || ticker,
+        principal,
+        profitPercent: d.defaultProfitPercent || 0.03,
+        stopLossPercent: d.defaultStopLossPercent || -0.02,
+        maxAdditionalBuys: 2,
+        additionalBuyDropPercent: -0.03,
+        entryStrategy: 'ema_pullback',
+        memo: '',
+      });
+      renderStrategyDetail('domestic', 'swing');
+      toast(`${ticker} 추가됨`);
+    }
+
+    // ==================== Condition Picker ====================
+    function conditionPickerRow(currentSeq, currentName, onSelectCb) {
+      const id = 'cond-picker-' + Math.random().toString(36).slice(2, 8);
+      const displayText = currentName && currentSeq ? `${currentName} (#${currentSeq})` : '선택 안 함';
+      return `
+        <div class="row">
+          <div class="row-left">
+            <div class="row-label">HTS 조건검색</div>
+            <div class="row-desc">한투 API에서 조건 목록을 불러옵니다</div>
+          </div>
+          <div class="row-right" style="display:flex;align-items:center;gap:6px">
+            <select class="input" id="${id}" onchange="(${onSelectCb})(this)" style="width:200px">
+              <option value="">${currentName ? currentName + ' (#' + currentSeq + ')' : '선택 안 함'}</option>
+            </select>
+            <button class="btn btn-sm btn-primary" onclick="openConditionPicker('${id}','${currentSeq||''}')">조회</button>
+          </div>
+        </div>`;
+    }
+
+    async function openConditionPicker(selectId, currentSeq) {
+      const sel = $(selectId);
+      sel.innerHTML = '<option value="">로딩 중...</option>';
+      sel.disabled = true;
+      const list = await loadConditionList();
+      sel.disabled = false;
+      if (!list || list.length === 0) {
+        sel.innerHTML = '<option value="">조건 없음</option>';
+        return;
+      }
+      sel.innerHTML = '<option value="">선택하세요</option>' +
+        list.map(c => `<option value="${c.seq}|${c.condition_nm}" ${c.seq === currentSeq ? 'selected' : ''}>${c.condition_nm} (#${c.seq})${c.grp_nm ? ' — ' + c.grp_nm : ''}</option>`).join('');
     }
 
     // ==================== Row Builders ====================
@@ -579,20 +925,26 @@
       await saveTrading(C.trading);
       toast(`${market === 'domestic' ? '국내' : '해외'} 시장 ${el.checked ? '활성화' : '비활성화'}`);
     }
-    async function onToggleSwing(el) {
-      if (!C.trading.domestic) C.trading.domestic = { enabled: false, strategy: null };
-      C.trading.domestic.swingEnabled = el.checked;
+    async function onToggleStrategy(market, strategy, checked, el) {
+      if (!C.trading[market]) C.trading[market] = { enabled: false, strategies: [] };
+      const mc = C.trading[market];
+      if (!mc.strategies) mc.strategies = mc.strategy ? [mc.strategy] : [];
+      if (mc.swingEnabled && !mc.strategies.includes('swing')) mc.strategies.push('swing');
+
+      if (checked) {
+        if (!mc.strategies.includes(strategy)) mc.strategies.push(strategy);
+      } else {
+        mc.strategies = mc.strategies.filter(s => s !== strategy);
+      }
+
+      // 레거시 필드 동기화
+      mc.strategy = mc.strategies[0] || null;
+      if (market === 'domestic') mc.swingEnabled = mc.strategies.includes('swing');
+
       await saveTrading(C.trading);
-      toast('스윙 ' + (el.checked ? 'ON' : 'OFF'));
-    }
-    async function onChangeStrategy(market, value) {
-      if (!C.trading[market]) C.trading[market] = { enabled: false, strategy: null };
-      C.trading[market].strategy = value || null;
-      await saveTrading(C.trading);
-      activeStrategyTab = 'basic';
-      if (value) renderStrategyDetail(market, value);
-      else $('strategy-section').innerHTML = '';
-      toast(`전략: ${value || '없음'}`);
+      // 전체 리렌더 (pill 상태 + 패널)
+      render();
+      toast(`${STRAT_LABELS[strategy] || strategy} ${checked ? 'ON' : 'OFF'}`);
     }
 
     function switchMarket(m) {
@@ -659,6 +1011,150 @@
       s.tickers.push(val);
       input.value = '';
       renderStrategyDetail(market, strategy);
+    }
+
+    // ==================== Account Management ====================
+    function showAddAccountModal() {
+      $('modal-root').innerHTML = `
+        <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+          <div class="modal">
+            <h3>계좌 추가</h3>
+            <div class="modal-field">
+              <label>계좌 ID (영문, 숫자, 하이픈)</label>
+              <input class="input" id="m-id" placeholder="예: sub1">
+            </div>
+            <div class="modal-field">
+              <label>별명</label>
+              <input class="input" id="m-nick" placeholder="예: 부계좌">
+            </div>
+            <div class="modal-field">
+              <label>계좌번호</label>
+              <input class="input" id="m-acno" placeholder="12345678-01">
+            </div>
+            <div class="modal-field">
+              <label>앱 키 (App Key)</label>
+              <input class="input" id="m-appkey" placeholder="KIS App Key">
+            </div>
+            <div class="modal-field">
+              <label>앱 시크릿 (App Secret)</label>
+              <input class="input" id="m-appsec" type="password" placeholder="KIS App Secret">
+            </div>
+            <div class="modal-field">
+              <label>HTS 사용자 ID</label>
+              <input class="input" id="m-hts" placeholder="HTS ID">
+            </div>
+            <div class="modal-actions">
+              <button class="btn btn-ghost" onclick="closeModal()">취소</button>
+              <button class="btn btn-primary" onclick="doAddAccount()">추가</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    async function doAddAccount() {
+      const id = $('m-id').value.trim();
+      const nickname = $('m-nick').value.trim();
+      const accountNo = $('m-acno').value.trim();
+      const appKey = $('m-appkey').value.trim();
+      const appSecret = $('m-appsec').value.trim();
+      const htsUserId = $('m-hts').value.trim();
+      if (!id || !nickname || !accountNo || !appKey || !appSecret) {
+        toast('필수 항목을 모두 입력하세요', 'error'); return;
+      }
+      try {
+        const res = await fetch(API_ACCOUNTS, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ id, nickname, accountNo, appKey, appSecret, htsUserId }),
+        });
+        const data = await res.json();
+        if (!res.ok) { toast(data.error || '추가 실패', 'error'); return; }
+        closeModal();
+        currentAccountId = id;
+        await load();
+        toast('계좌 추가 완료');
+      } catch (e) {
+        toast('계좌 추가 실패', 'error');
+      }
+    }
+
+    function showEditAccountModal(accountId) {
+      const acct = accounts.find(a => a.id === accountId);
+      if (!acct) return;
+      // Load credentials
+      fetch(`${API_ACCOUNTS}/${accountId}/credentials`).then(r => r.json()).then(creds => {
+        $('modal-root').innerHTML = `
+          <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+            <div class="modal">
+              <h3>계좌 설정 — ${acct.nickname || acct.id}</h3>
+              <div class="modal-field">
+                <label>별명</label>
+                <input class="input" id="m-nick" value="${acct.nickname || ''}">
+              </div>
+              <div class="modal-field">
+                <label>계좌번호</label>
+                <input class="input" id="m-acno" value="${acct.accountNo || ''}">
+              </div>
+              <div class="modal-field">
+                <label>앱 키</label>
+                <input class="input" id="m-appkey" value="${creds.appKey || ''}">
+              </div>
+              <div class="modal-field">
+                <label>앱 시크릿 (변경 시에만 입력)</label>
+                <input class="input" id="m-appsec" type="password" placeholder="${creds.appSecret || '미설정'}">
+              </div>
+              <div class="modal-field">
+                <label>HTS 사용자 ID</label>
+                <input class="input" id="m-hts" value="${creds.htsUserId || ''}">
+              </div>
+              <div class="modal-actions">
+                <button class="btn btn-danger btn-sm" onclick="doDeleteAccount('${accountId}')" style="margin-right:auto">삭제</button>
+                <button class="btn btn-ghost" onclick="closeModal()">취소</button>
+                <button class="btn btn-primary" onclick="doEditAccount('${accountId}')">저장</button>
+              </div>
+            </div>
+          </div>`;
+      });
+    }
+
+    async function doEditAccount(accountId) {
+      const nickname = $('m-nick').value.trim();
+      const accountNo = $('m-acno').value.trim();
+      const appKey = $('m-appkey').value.trim();
+      const appSecret = $('m-appsec').value.trim();
+      const htsUserId = $('m-hts').value.trim();
+      const body = { nickname, accountNo, appKey, htsUserId };
+      if (appSecret) body.appSecret = appSecret;
+      try {
+        const res = await fetch(`${API_ACCOUNTS}/${accountId}`, {
+          method: 'PUT',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) { const d = await res.json(); toast(d.error || '저장 실패', 'error'); return; }
+        closeModal();
+        await load();
+        toast('계좌 설정 저장 완료');
+      } catch (e) {
+        toast('저장 실패', 'error');
+      }
+    }
+
+    async function doDeleteAccount(accountId) {
+      if (!confirm('정말 이 계좌를 삭제하시겠습니까? (데이터는 보존됩니다)')) return;
+      try {
+        await fetch(`${API_ACCOUNTS}/${accountId}`, { method: 'DELETE' });
+        closeModal();
+        if (currentAccountId === accountId) currentAccountId = null;
+        await load();
+        toast('계좌 삭제 완료');
+      } catch (e) {
+        toast('삭제 실패', 'error');
+      }
+    }
+
+    function closeModal() {
+      $('modal-root').innerHTML = '';
     }
 
     // ==================== Init ====================

@@ -2646,48 +2646,57 @@ interface CachedToken {
   appKeyPrefix?: string; // appKey 변경 감지용 (앞 8자)
 }
 
-// 인메모리 캐시 (프로세스 내 최우선)
-let inMemoryTokenCache: CachedToken | null = null;
+// 인메모리 캐시 (프로세스 내 최우선) — 계좌별 Map
+const inMemoryTokenCache = new Map<string, CachedToken>();
 
 /**
  * 캐시된 토큰 가져오기 또는 새로 발급
  * 3-tier: 인메모리 → 로컬 파일 → KIS API
+ *
+ * accountStore를 전달하면 계좌별 파일 캐시 사용, 없으면 글로벌 파일 캐시 사용
  */
 export async function getOrRefreshToken(
   _userId: string,
   _accountId: string,
   credentials: { appKey: string; appSecret: string },
   kisClient: KisApiClient,
-  forceRefresh = false
+  forceRefresh = false,
+  accountStore?: { getTokenCache: <T>() => T | null; setTokenCache: (data: unknown) => void }
 ): Promise<string> {
   try {
+    const cacheKey = _accountId || 'default';
     const now = Date.now();
     const currentKeyPrefix = credentials.appKey.slice(0, 8);
 
     // 1. 인메모리 캐시 확인
-    if (!forceRefresh && inMemoryTokenCache) {
-      const keyChanged = inMemoryTokenCache.appKeyPrefix && inMemoryTokenCache.appKeyPrefix !== currentKeyPrefix;
-      if (!keyChanged && inMemoryTokenCache.expiresAt > now) {
-        console.log(`[Token] 인메모리 캐시 사용 (만료까지 ${Math.round((inMemoryTokenCache.expiresAt - now) / 1000 / 60)}분)`);
-        return inMemoryTokenCache.accessToken;
+    if (!forceRefresh) {
+      const memCache = inMemoryTokenCache.get(cacheKey);
+      if (memCache) {
+        const keyChanged = memCache.appKeyPrefix && memCache.appKeyPrefix !== currentKeyPrefix;
+        if (!keyChanged && memCache.expiresAt > now) {
+          console.log(`[Token:${cacheKey}] 인메모리 캐시 사용 (만료까지 ${Math.round((memCache.expiresAt - now) / 1000 / 60)}분)`);
+          return memCache.accessToken;
+        }
       }
     }
 
     // 2. 로컬 파일 캐시 확인
     if (!forceRefresh) {
-      const fileCache = getTokenCache<CachedToken>();
+      const fileCache = accountStore
+        ? accountStore.getTokenCache<CachedToken>()
+        : getTokenCache<CachedToken>();
       if (fileCache) {
         const keyChanged = fileCache.appKeyPrefix && fileCache.appKeyPrefix !== currentKeyPrefix;
         if (!keyChanged && fileCache.expiresAt > now) {
-          console.log(`[Token] 파일 캐시 사용 (만료까지 ${Math.round((fileCache.expiresAt - now) / 1000 / 60)}분)`);
-          inMemoryTokenCache = fileCache;
+          console.log(`[Token:${cacheKey}] 파일 캐시 사용 (만료까지 ${Math.round((fileCache.expiresAt - now) / 1000 / 60)}분)`);
+          inMemoryTokenCache.set(cacheKey, fileCache);
           return fileCache.accessToken;
         }
       }
     }
 
     // 3. 새 토큰 발급
-    console.log('[Token] 새 토큰 발급');
+    console.log(`[Token:${cacheKey}] 새 토큰 발급`);
     const tokenResponse = await kisClient.getAccessToken(credentials.appKey, credentials.appSecret);
     const accessToken = tokenResponse.access_token;
 
@@ -2699,8 +2708,12 @@ export async function getOrRefreshToken(
     };
 
     // 인메모리 + 파일 캐시 동시 저장
-    inMemoryTokenCache = cacheData;
-    setTokenCache(cacheData);
+    inMemoryTokenCache.set(cacheKey, cacheData);
+    if (accountStore) {
+      accountStore.setTokenCache(cacheData);
+    } else {
+      setTokenCache(cacheData);
+    }
 
     return accessToken;
   } catch (err) {

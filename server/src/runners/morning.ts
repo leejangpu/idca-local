@@ -9,8 +9,9 @@
 import { config } from '../config';
 import { KisApiClient, getOrRefreshToken } from '../lib/kisApi';
 import * as localStore from '../lib/localStore';
+import { AccountContext } from '../lib/accountContext';
 
-export async function runMorningSnapshot(): Promise<void> {
+export async function runMorningSnapshot(ctx?: AccountContext): Promise<void> {
   console.log('[MorningTrigger] Started');
 
   const now = new Date();
@@ -19,13 +20,15 @@ export async function runMorningSnapshot(): Promise<void> {
   const dateStr = kstDate.toISOString().slice(0, 10);
   const docId = dateStr.replace(/-/g, '');
 
-  const { userId, accountId } = config;
+  const { accountId } = config;
 
   try {
-    const kisClient = new KisApiClient(config.kis.paperTrading);
-    const credentials = { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
-    const accessToken = await getOrRefreshToken(userId, accountId, credentials, kisClient);
-    const accountNo = config.kis.accountNo;
+    const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+    const credentials = ctx
+      ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
+      : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };
+    const accessToken = await getOrRefreshToken('', ctx?.accountId ?? accountId, credentials, kisClient);
+    const accountNo = ctx?.credentials.accountNo ?? config.kis.accountNo;
 
     // 재시도 헬퍼
     const withRetry = async <T>(fn: () => Promise<T>, label: string, retries = 3): Promise<T | null> => {
