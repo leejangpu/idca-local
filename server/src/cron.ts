@@ -8,7 +8,7 @@ import { runMomentumScalpBuyKR, runMomentumScalpSellKR } from './runners/momentu
 import { runMarketCloseKR, runMarketCloseUS } from './runners/marketClose';
 import { runDailyTrading } from './runners/trading';
 import { runMorningSnapshot } from './runners/morning';
-// import { runRealtimeV2KR, runRealtimeV2US } from './runners/realtimeV2'; // TODO: realtimeV2 변환 완료 후 활성화
+import { runRealtimeV2KR, runRealtimeV2US } from './runners/realtimeV2';
 
 export function registerAllCrons(): void {
   console.log('[Cron] 스케줄러 등록 시작');
@@ -16,8 +16,9 @@ export function registerAllCrons(): void {
   // ==================== 국내 시장 (KST) ====================
 
   // 실사오팔 v2 — 매분 (09:00~15:30 KST)
-  // TODO: realtimeV2 변환 완료 후 활성화
-  // cron.schedule('*/1 0-6 * * 1-5', () => runRealtimeV2KR(), { timezone: 'Asia/Seoul' });
+  cron.schedule('*/1 0-6 * * 1-5', () => {
+    runRealtimeV2KR().catch(err => console.error('[Cron] RealtimeV2KR error:', err));
+  }, { timezone: 'Asia/Seoul' });
 
   // 모멘텀 스캘핑 매수 — 매분 (09:00~15:20 KST)
   cron.schedule('*/1 0-6 * * 1-5', () => {
@@ -37,8 +38,9 @@ export function registerAllCrons(): void {
   // ==================== 해외 시장 (US) ====================
 
   // 실사오팔 v2 해외 — 매분 (US 장중)
-  // TODO: realtimeV2 변환 완료 후 활성화
-  // cron.schedule('*/1 22-23,0-6 * * 1-5', () => runRealtimeV2US());
+  cron.schedule('*/1 22-23,0-6 * * 1-5', () => {
+    runRealtimeV2US().catch(err => console.error('[Cron] RealtimeV2US error:', err));
+  });
 
   // 일봉 매매 (무한매수법/VR) — US 장 개시 후 (UTC 14:30 = EST 09:30)
   cron.schedule('30 14 * * 1-5', () => {
@@ -57,6 +59,5 @@ export function registerAllCrons(): void {
     runMorningSnapshot().catch(err => console.error('[Cron] MorningSnapshot error:', err));
   });
 
-  console.log('[Cron] 스케줄러 등록 완료');
-  console.log('[Cron] ⚠️ realtimeV2 러너는 변환 진행 중 — 활성화 대기');
+  console.log('[Cron] 스케줄러 등록 완료 (전체 러너 활성화)');
 }
