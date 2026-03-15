@@ -4,13 +4,11 @@
   "description": "IDCA 로컬 매매 시스템 (Firebase-free)",
   "private": true,
   "workspaces": [
-    "server",
-    "web"
+    "server"
   ],
   "scripts": {
     "dev": "npm run dev --workspace=server",
-    "dev:web": "npm run dev --workspace=web",
-    "build": "npm run build --workspace=server && npm run build --workspace=web",
+    "build": "npm run build --workspace=server",
     "start": "pm2 start ecosystem.config.js",
     "stop": "pm2 stop ecosystem.config.js",
     "logs": "pm2 logs"

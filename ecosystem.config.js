@@ -15,18 +15,5 @@ module.exports = {
       merge_logs: true,
       autorestart: true,
     },
-    {
-      name: 'idca-web',
-      script: 'npx',
-      args: 'next start -p 3000',
-      cwd: './web',
-      env: {
-        NODE_ENV: 'production',
-        NEXT_PUBLIC_API_URL: 'http://localhost:3001',
-      },
-      watch: false,
-      max_memory_restart: '256M',
-      autorestart: true,
-    },
   ],
 };

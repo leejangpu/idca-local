@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IDCA Local — 설정</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; max-width: 800px; margin: 0 auto; }
+    h1 { color: #00d4ff; margin-bottom: 20px; font-size: 1.4em; }
+    h2 { color: #7b8cde; margin: 24px 0 12px; font-size: 1.1em; border-bottom: 1px solid #333; padding-bottom: 6px; }
+    .card { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+    .row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1a1a2e; }
+    .row:last-child { border-bottom: none; }
+    .row label { font-size: 0.9em; color: #aaa; min-width: 140px; }
+    .row input, .row select { background: #0f3460; border: 1px solid #444; color: #fff; padding: 6px 10px; border-radius: 4px; width: 200px; font-size: 0.9em; }
+    .row input:focus, .row select:focus { outline: none; border-color: #00d4ff; }
+    .toggle { position: relative; width: 48px; height: 26px; cursor: pointer; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle .slider { position: absolute; inset: 0; background: #444; border-radius: 26px; transition: 0.3s; }
+    .toggle .slider:before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; bottom: 3px; background: #ccc; border-radius: 50%; transition: 0.3s; }
+    .toggle input:checked + .slider { background: #00d4ff; }
+    .toggle input:checked + .slider:before { transform: translateX(22px); background: #fff; }
+    .btn { background: #00d4ff; color: #000; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.9em; }
+    .btn:hover { background: #00b8d9; }
+    .btn-danger { background: #e74c3c; color: #fff; }
+    .btn-danger:hover { background: #c0392b; }
+    .actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+    .status { padding: 8px 12px; border-radius: 4px; margin-bottom: 12px; font-size: 0.85em; display: none; }
+    .status.success { display: block; background: #1a4731; color: #4ade80; }
+    .status.error { display: block; background: #4a1a1a; color: #f87171; }
+    .ticker-list { margin-top: 8px; }
+    .ticker-item { display: flex; gap: 8px; align-items: center; padding: 6px 0; flex-wrap: wrap; }
+    .ticker-item input { width: 100px; }
+    .ticker-item .remove-btn { background: none; border: none; color: #e74c3c; cursor: pointer; font-size: 1.2em; }
+    .section-tab { display: flex; gap: 4px; margin-bottom: 12px; }
+    .section-tab button { background: #0f3460; border: 1px solid #333; color: #aaa; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
+    .section-tab button.active { background: #00d4ff; color: #000; border-color: #00d4ff; }
+    .hidden { display: none; }
+    .loading { text-align: center; padding: 40px; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>IDCA Local 설정</h1>
+  <div id="status" class="status"></div>
+  <div id="app" class="loading">로딩 중...</div>
+
+  <script>
+    const API = '/config';
+    let allConfig = {};
+
+    // ==================== API ====================
+    async function loadConfig() {
+      const res = await fetch(API);
+      allConfig = await res.json();
+      render();
+    }
+
+    async function saveTrading(data) {
+      const res = await fetch(`${API}/trading`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      return res.json();
+    }
+
+    async function saveStrategy(market, strategy, data) {
+      const res = await fetch(`${API}/${market}/${strategy}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      return res.json();
+    }
+
+    function showStatus(msg, type = 'success') {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = `status ${type}`;
+      setTimeout(() => { el.className = 'status'; }, 3000);
+    }
+
+    // ==================== Render ====================
+    function render() {
+      const t = allConfig.trading || {};
+      const app = document.getElementById('app');
+
+      app.innerHTML = `
+        <h2>매매 활성화</h2>
+        <div class="card">
+          <div class="row">
+            <label>전체 매매</label>
+            <label class="toggle"><input type="checkbox" id="tradingEnabled" ${t.tradingEnabled ? 'checked' : ''} onchange="toggleTrading(this)"><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <label>자동 승인</label>
+            <label class="toggle"><input type="checkbox" id="autoApprove" ${t.autoApprove ? 'checked' : ''} onchange="toggleAutoApprove(this)"><span class="slider"></span></label>
+          </div>
+        </div>
+
+        <h2>시장별 설정</h2>
+        <div class="section-tab">
+          <button class="active" onclick="showMarket('domestic', this)">국내</button>
+          <button onclick="showMarket('overseas', this)">해외</button>
+        </div>
+
+        <div id="market-domestic">${renderMarket('domestic', t.domestic)}</div>
+        <div id="market-overseas" class="hidden">${renderMarket('overseas', t.overseas)}</div>
+
+        <div id="strategy-detail"></div>
+      `;
+
+      // 활성 전략이 있으면 자동 표시
+      const dm = t.domestic || {};
+      if (dm.strategy) showStrategyDetail('domestic', dm.strategy);
+    }
+
+    function renderMarket(market, mc) {
+      const cfg = mc || { enabled: false, strategy: null };
+      const strategies = market === 'domestic'
+        ? [['momentumScalp', '모멘텀 스캘핑'], ['realtimeDdsobV2', '실사오팔v2']]
+        : [['infinite', '무한매수법'], ['vr', 'VR 리밸런싱'], ['realtimeDdsobV2', '실사오팔v2'], ['realtimeDdsobV2_1', '실사오팔v2.1']];
+
+      return `
+        <div class="card">
+          <div class="row">
+            <label>${market === 'domestic' ? '국내' : '해외'} 시장</label>
+            <label class="toggle"><input type="checkbox" ${cfg.enabled ? 'checked' : ''} onchange="toggleMarket('${market}', this)"><span class="slider"></span></label>
+          </div>
+          <div class="row">
+            <label>전략</label>
+            <select onchange="changeStrategy('${market}', this.value)">
+              <option value="">선택 안 함</option>
+              ${strategies.map(([val, label]) => `<option value="${val}" ${cfg.strategy === val ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      `;
+    }
+
+    function showStrategyDetail(market, strategy) {
+      if (!strategy) { document.getElementById('strategy-detail').innerHTML = ''; return; }
+      const data = allConfig.strategies?.[market]?.[strategy] || {};
+      const el = document.getElementById('strategy-detail');
+
+      el.innerHTML = `
+        <h2>${market === 'domestic' ? '국내' : '해외'} — ${strategy} 상세 설정</h2>
+        <div class="card">
+          <pre id="strategy-json" contenteditable="true" style="background:#0f3460; padding:12px; border-radius:4px; font-size:0.85em; white-space:pre-wrap; min-height:200px; outline:none; border:1px solid #333;">${JSON.stringify(data, null, 2)}</pre>
+          <div class="actions">
+            <button class="btn" onclick="saveStrategyJson('${market}', '${strategy}')">저장</button>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==================== Actions ====================
+    async function toggleTrading(el) {
+      const t = allConfig.trading || {};
+      t.tradingEnabled = el.checked;
+      await saveTrading(t);
+      allConfig.trading = t;
+      showStatus(el.checked ? '매매 활성화' : '매매 비활성화');
+    }
+
+    async function toggleAutoApprove(el) {
+      const t = allConfig.trading || {};
+      t.autoApprove = el.checked;
+      await saveTrading(t);
+      allConfig.trading = t;
+      showStatus('자동 승인 ' + (el.checked ? 'ON' : 'OFF'));
+    }
+
+    async function toggleMarket(market, el) {
+      const t = allConfig.trading || {};
+      if (!t[market]) t[market] = { enabled: false, strategy: null };
+      t[market].enabled = el.checked;
+      await saveTrading(t);
+      allConfig.trading = t;
+      showStatus(`${market} 시장 ${el.checked ? '활성화' : '비활성화'}`);
+    }
+
+    async function changeStrategy(market, strategy) {
+      const t = allConfig.trading || {};
+      if (!t[market]) t[market] = { enabled: false, strategy: null };
+      t[market].strategy = strategy || null;
+      await saveTrading(t);
+      allConfig.trading = t;
+      showStrategyDetail(market, strategy);
+      showStatus(`${market} 전략: ${strategy || '없음'}`);
+    }
+
+    function showMarket(market, btn) {
+      document.querySelectorAll('.section-tab button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('market-domestic').classList.toggle('hidden', market !== 'domestic');
+      document.getElementById('market-overseas').classList.toggle('hidden', market !== 'overseas');
+
+      const t = allConfig.trading || {};
+      const mc = t[market] || {};
+      if (mc.strategy) showStrategyDetail(market, mc.strategy);
+      else document.getElementById('strategy-detail').innerHTML = '';
+    }
+
+    async function saveStrategyJson(market, strategy) {
+      try {
+        const json = document.getElementById('strategy-json').textContent;
+        const data = JSON.parse(json);
+        await saveStrategy(market, strategy, data);
+        allConfig.strategies = allConfig.strategies || {};
+        allConfig.strategies[market] = allConfig.strategies[market] || {};
+        allConfig.strategies[market][strategy] = data;
+        showStatus('전략 설정 저장 완료');
+      } catch (e) {
+        showStatus('JSON 파싱 오류: ' + e.message, 'error');
+      }
+    }
+
+    // ==================== Init ====================
+    loadConfig();
+  </script>
+</body>
+</html>
