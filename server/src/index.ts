@@ -1,6 +1,6 @@
 /**
  * IDCA Local Server — 메인 엔트리포인트
- * Express (설정 UI + config API) + node-cron 스케줄러
+ * Express (설정 UI) + node-cron (매매 스케줄러) + Telegram (polling 봇)
  */
 
 import express from 'express';
@@ -9,6 +9,7 @@ import { config } from './config';
 import { initLocalStore } from './lib/localStore';
 import { registerAllCrons } from './cron';
 import { configRoutes } from './routes/config';
+import { startTelegramPolling } from './telegram/poller';
 
 const app = express();
 
@@ -30,6 +31,9 @@ app.use('/config', configRoutes);
 async function start() {
   initLocalStore();
   registerAllCrons();
+
+  // 텔레그램 long-polling 시작 (백그라운드)
+  startTelegramPolling();
 
   app.listen(config.port, () => {
     console.log(`[IDCA-Local] 서버 시작: http://localhost:${config.port}`);
