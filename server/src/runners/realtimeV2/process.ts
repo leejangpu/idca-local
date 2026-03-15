@@ -5,6 +5,7 @@
  * 변경: Firestore → localStore, admin.firestore 타입 제거
  */
 
+import { config } from '../../config';
 import {
   KisApiClient,
   getOrRefreshToken,
@@ -714,7 +715,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
     return { success: false, soldQty: 0, message: '자격증명을 찾을 수 없습니다' };
   }
   const kisClient = new KisApiClient(false);
-  let accessToken = await getOrRefreshToken('local', 'local', credentials, kisClient);
+  let accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient);
 
   // 2. state 조회
   const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
@@ -761,7 +762,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   } catch (err) {
     if (isTokenExpiredError(err)) {
       console.log(`[ForceStop:${tag}] Token expired, refreshing...`);
-      accessToken = await getOrRefreshToken('local', 'local', credentials, kisClient, true);
+      accessToken = await getOrRefreshToken(config.userId, config.accountId, credentials, kisClient, true);
     } else {
       console.error(`[ForceStop:${tag}] Unfilled cleanup error:`, err);
     }
