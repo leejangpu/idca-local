@@ -9,6 +9,7 @@ import { runMarketCloseKR, runMarketCloseUS } from './runners/marketClose';
 import { runDailyTrading } from './runners/trading';
 import { runMorningSnapshot } from './runners/morning';
 import { runRealtimeV2KR, runRealtimeV2US } from './runners/realtimeV2';
+import { runSwingTradingLoop, runEodSetupScan, submitPendingOrders, checkPendingFills, cancelUnfilledOrders } from './runners/swingTrading';
 
 export function registerAllCrons(): void {
   console.log('[Cron] 스케줄러 등록 시작');
@@ -57,6 +58,33 @@ export function registerAllCrons(): void {
   // 모닝 잔고 스냅샷 (KST 08:00 = UTC 23:00)
   cron.schedule('0 23 * * *', () => {
     runMorningSnapshot().catch(err => console.error('[Cron] MorningSnapshot error:', err));
+  });
+
+  // ==================== 스윙매매 (KST) ====================
+
+  // 스윙 매매 루프 — 5분 주기 (09:00~15:30 KST)
+  cron.schedule('*/5 0-6 * * 1-5', () => {
+    runSwingTradingLoop().catch(err => console.error('[Cron] SwingLoop error:', err));
+  }, { timezone: 'Asia/Seoul' });
+
+  // 스윙 EOD 스캔 — 매일 KST 17:00 (장마감 후 일봉 확정)
+  cron.schedule('0 8 * * 1-5', () => {
+    runEodSetupScan().catch(err => console.error('[Cron] SwingEodScan error:', err));
+  });
+
+  // 스윙 주문 제출 — 매일 KST 08:50 (장 개시 10분 전)
+  cron.schedule('50 23 * * 0-4', () => {
+    submitPendingOrders().catch(err => console.error('[Cron] SwingSubmit error:', err));
+  });
+
+  // 스윙 체결 확인 — 매일 KST 15:40 (장마감 후)
+  cron.schedule('40 6 * * 1-5', () => {
+    checkPendingFills().catch(err => console.error('[Cron] SwingFills error:', err));
+  });
+
+  // 스윙 미체결 취소 — 매일 KST 15:45
+  cron.schedule('45 6 * * 1-5', () => {
+    cancelUnfilledOrders().catch(err => console.error('[Cron] SwingCancel error:', err));
   });
 
   console.log('[Cron] 스케줄러 등록 완료 (전체 러너 활성화)');
