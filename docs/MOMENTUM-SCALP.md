@@ -49,7 +49,7 @@
   - 현재가 박스 하단 30% 이내
   - uptick 확인 (직전 봉 대비 +1틱 반등)
     ↓
-[매수] MARKET 주문 (현재가 진입)
+[매수] LIMIT 주문 (bid+1틱 진입)
     ↓
 [매도 판단] 5초마다 bestBid 체크
   - bestBid ≥ 목표가 (진입가×1.005) → 익절 MARKET
@@ -86,7 +86,10 @@
 - **100건+ 수집 후 분석**
 
 ### 수집 데이터
-- `scalpShadowLogs`: 가상 매매 기록 (진입가, 청산가, exitReason, 보유시간, boxPos 등)
+- `scalpShadowLogs`: 가상 매매 기록 (type: ENTRY/EXIT/CANCEL)
+  - **ENTRY**: 진입가, 수량, 배정금, 목표가, 손절가, 박스위치/범위, 스프레드/타깃틱, 호가정보
+  - **EXIT**: 청산가, exitReason, 수익률, 보유시간, bestBidAtExit, boxPos 등
+  - **CANCEL**: 장마감 미체결 취소
 - `scalpScanLogs`: 매 트리거 필터 통계 (조건검색 수, 코드필터 탈락, 박스진입 탈락, 진입신호 수)
 
 ### 분석 체크포인트

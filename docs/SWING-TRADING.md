@@ -75,7 +75,8 @@
 
 ### 수집 데이터
 - `swingScanLogs`: 일별 유니버스 스캔 기록 (종목 수, 후보, zone 분포)
-- `swingShadowLogs`: 가상 체결 기록 (limitPrice vs 실제 low/open)
+- `swingShadowLogs`: D-confirmed 가상 체결 기록 (limitPrice vs 실제 low/open)
+- `swingShadowTrades`: 메인 루프 가상 매매 기록 (BUY/SELL/ADDITIONAL_BUY, 가격, 수량, 지표, 수익률 등)
 - `swingState`: 보유종목 상태 (트레일링, 청산 판단)
 
 ### 분석 체크포인트 (1주 후)

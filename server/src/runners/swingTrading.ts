@@ -69,6 +69,52 @@ export interface ShadowFillLog {
   closeAtFillDay: number;  // 체결일 종가 (미체결 시 해당일 종가)
 }
 
+export interface SwingShadowTradeLog {
+  timestamp: string;           // ISO timestamp
+  action: 'BUY' | 'SELL' | 'ADDITIONAL_BUY' | 'PARTIAL_SELL';
+  ticker: string;
+  stockName: string;
+  price: number;               // 매수/매도 기준가
+  quantity: number;
+  amount: number;              // price × quantity
+  // 진입 정보 (BUY)
+  orderType?: string;          // LIMIT, MARKET, etc.
+  rankScore?: number;
+  readinessScore?: number;
+  pullbackState?: string;
+  trendScore?: number;
+  pullbackScore?: number;
+  supportScore?: number;
+  triggerScore?: number;
+  rrRatio?: number;
+  // 청산 정보 (SELL)
+  sellReason?: string;
+  sellDetail?: string;
+  profitRate?: number;         // 수익률 %
+  profit?: number;             // 예상 수익금
+  holdingDays?: number;
+  highestPrice?: number;
+  positionPhase?: string;
+  // 추가매수 정보 (ADDITIONAL_BUY)
+  addBuyReason?: string;
+  avgPriceAfter?: number;      // 추가매수 후 평단가
+  totalQuantityAfter?: number;
+  // 지표
+  currentPrice: number;
+  indicators?: {
+    ema5: number | null;
+    ema20: number | null;
+    ema60: number | null;
+    rsi14: number | null;
+    atr14: number | null;
+    macdHist: number | null;
+  };
+  // 포지션 상태
+  totalInvested?: number;
+  totalQuantity?: number;
+  avgPrice?: number;
+}
+
 export interface UniverseScanLog {
   date: string;                    // YYYYMMDD
   scannedAt: string;               // ISO timestamp
@@ -161,6 +207,11 @@ function appendShadowLog(date: string, log: ShadowFillLog): void {
 
 function appendScanLog(log: UniverseScanLog): void {
   localStore.appendLog<UniverseScanLog>('swingScanLogs', log.date, log);
+}
+
+function appendShadowTradeLog(log: SwingShadowTradeLog): void {
+  const dateKey = getTodayKST();
+  localStore.appendLog<SwingShadowTradeLog>('swingShadowTrades', dateKey, log);
 }
 
 // ==================== 캐시 ====================
@@ -411,6 +462,8 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
     return 0;
   }
 
+  const shadowMode = swingConfig.shadowMode !== false;
+
   // 3. KIS 인증 (config에서 자격증명 읽기)
   const credentials = ctx
     ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret, accountNo: ctx.credentials.accountNo }
@@ -483,7 +536,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
     try {
       await processSwingTicker(
         kisClient, credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
-        tickerConfig, state, swingConfig, holdingCount, marketContext,
+        tickerConfig, state, swingConfig, holdingCount, marketContext, shadowMode,
       );
       processed++;
     } catch (err) {
@@ -589,42 +642,72 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
           : currentPrice + getKoreanTickSize(currentPrice);
         const quantity = entryResult.suggestedQuantity;
 
-        console.log(`[Swing] ${ticker} (${stockName}) 매수 신호: ${plan.orderType} ${buyPrice}원 (랭킹 ${scan.rankScore}점)`);
+        console.log(`[Swing] ${shadowMode ? '[SHADOW] ' : ''}${ticker} (${stockName}) 매수 신호: ${plan.orderType} ${buyPrice}원 (랭킹 ${scan.rankScore}점)`);
 
-        try {
-          const orderRes = await kisClient.submitDomesticOrder(
-            credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
-            { ticker, side: 'BUY', orderType: 'LIMIT', price: buyPrice, quantity },
-          );
+        if (shadowMode) {
+          // 쉐도우 모드: 실제 주문 없이 파일 로그
+          console.log(`[Swing] [SHADOW] ${ticker} 가상 매수: ${quantity}주 × ${buyPrice}원`);
+          appendShadowTradeLog({
+            timestamp: new Date().toISOString(),
+            action: 'BUY',
+            ticker,
+            stockName,
+            price: buyPrice,
+            quantity,
+            amount: buyPrice * quantity,
+            orderType: plan.orderType,
+            rankScore: scan.rankScore,
+            readinessScore: entryResult.readinessScore,
+            pullbackState: entryResult.pullbackState,
+            trendScore: entryResult.trendScore,
+            pullbackScore: entryResult.pullbackScore,
+            supportScore: entryResult.supportScore,
+            triggerScore: entryResult.triggerScore,
+            rrRatio: entryResult.executionGate?.rrRatio,
+            currentPrice,
+            indicators: {
+              ema5: indicators.ema5, ema20: indicators.ema20, ema60: indicators.ema60,
+              rsi14: indicators.rsi14, atr14: indicators.atr14,
+              macdHist: indicators.macdHist,
+            },
+          });
+          todayEntries++;
+        } else {
+          try {
+            const orderRes = await kisClient.submitDomesticOrder(
+              credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+              { ticker, side: 'BUY', orderType: 'LIMIT', price: buyPrice, quantity },
+            );
 
-          if (orderRes.rt_cd === '0') {
-            const buyRecord: SwingBuyRecord = {
-              price: buyPrice, quantity, amount: buyPrice * quantity,
-              date: new Date().toISOString(), reason: 'initial',
-              orderNo: orderRes.output?.ODNO || '',
-            };
-            const { avgPrice, totalQuantity, totalInvested } = calculateAvgPrice([buyRecord]);
-            update.status = 'holding';
-            update.checkInterval = 5;
-            update.buyRecords = [buyRecord];
-            update.avgPrice = avgPrice;
-            update.totalQuantity = totalQuantity;
-            update.totalInvested = totalInvested;
-            update.entryDate = new Date().toISOString();
-            update.holdingDays = 0;
-            update.highestPrice = currentPrice;
-            (update as Record<string, unknown>).positionPhase = 'INIT_RISK';
-            if (entryResult.swingContext?.initialTradeStop != null) {
-              (update as Record<string, unknown>).initialTradeStop = entryResult.swingContext.initialTradeStop;
+            if (orderRes.rt_cd === '0') {
+              const buyRecord: SwingBuyRecord = {
+                price: buyPrice, quantity, amount: buyPrice * quantity,
+                date: new Date().toISOString(), reason: 'initial',
+                orderNo: orderRes.output?.ODNO || '',
+              };
+              const { avgPrice, totalQuantity, totalInvested } = calculateAvgPrice([buyRecord]);
+              update.status = 'holding';
+              update.checkInterval = 5;
+              update.buyRecords = [buyRecord];
+              update.avgPrice = avgPrice;
+              update.totalQuantity = totalQuantity;
+              update.totalInvested = totalInvested;
+              update.entryDate = new Date().toISOString();
+              update.holdingDays = 0;
+              update.highestPrice = currentPrice;
+              (update as Record<string, unknown>).positionPhase = 'INIT_RISK';
+              if (entryResult.swingContext?.initialTradeStop != null) {
+                (update as Record<string, unknown>).initialTradeStop = entryResult.swingContext.initialTradeStop;
+              }
+              todayEntries++;
+              console.log(`[Swing] ${ticker} 매수 주문 성공: ${quantity}주 × ${buyPrice}원 (${plan.orderType})`);
+              await sendSwingNotification(`[스윙 매수] ${stockName}(${ticker})\n${quantity}주 × ${buyPrice.toLocaleString()}원 (${plan.orderType})\nR:R=${entryResult.executionGate?.rrRatio.toFixed(1) ?? 'N/A'}\n랭킹=${scan.rankScore}점`);
+            } else {
+              console.error(`[Swing] ${ticker} 매수 주문 실패: ${orderRes.msg1}`);
             }
-            todayEntries++;
-            console.log(`[Swing] ${ticker} 매수 주문 성공: ${quantity}주 × ${buyPrice}원 (${plan.orderType})`);
-            await sendSwingNotification(`[스윙 매수] ${stockName}(${ticker})\n${quantity}주 × ${buyPrice.toLocaleString()}원 (${plan.orderType})\nR:R=${entryResult.executionGate?.rrRatio.toFixed(1) ?? 'N/A'}\n랭킹=${scan.rankScore}점`);
-          } else {
-            console.error(`[Swing] ${ticker} 매수 주문 실패: ${orderRes.msg1}`);
+          } catch (err) {
+            console.error(`[Swing] ${ticker} 매수 주문 에러:`, (err as Error).message);
           }
-        } catch (err) {
-          console.error(`[Swing] ${ticker} 매수 주문 에러:`, (err as Error).message);
         }
       }
     } else if (plan?.orderType === 'SKIP') {
@@ -656,6 +739,7 @@ async function processSwingTicker(
   swingConfig: SwingConfig,
   holdingCount: number,
   marketContext?: MarketContext,
+  shadowMode: boolean = false,
 ): Promise<void> {
   const { ticker, stockName } = tickerConfig;
 
@@ -720,9 +804,43 @@ async function processSwingTicker(
       );
 
       if (exitResult.shouldSell) {
-        console.log(`[Swing] ${ticker} (${stockName}) 매도 신호: ${exitResult.detail}`);
+        console.log(`[Swing] ${shadowMode ? '[SHADOW] ' : ''}${ticker} (${stockName}) 매도 신호: ${exitResult.detail}`);
 
         const sellQty = exitResult.sellQuantity || state.totalQuantity;
+
+        if (shadowMode) {
+          const sellAmount = currentPrice * sellQty;
+          const profit = sellAmount - state.totalInvested;
+          const profitRate = state.totalInvested > 0 ? (profit / state.totalInvested * 100) : 0;
+          console.log(`[Swing] [SHADOW] ${ticker} 가상 매도: ${sellQty}주 (사유: ${exitResult.reason}, 수익률: ${profitRate.toFixed(2)}%)`);
+          appendShadowTradeLog({
+            timestamp: new Date().toISOString(),
+            action: exitResult.isPartialExit ? 'PARTIAL_SELL' : 'SELL',
+            ticker,
+            stockName,
+            price: currentPrice,
+            quantity: sellQty,
+            amount: sellAmount,
+            sellReason: exitResult.reason,
+            sellDetail: exitResult.detail,
+            profitRate: Number(profitRate.toFixed(2)),
+            profit: Math.round(profit),
+            holdingDays: update.holdingDays,
+            highestPrice: trailing.highestPrice,
+            positionPhase: currentPhase,
+            currentPrice,
+            totalInvested: state.totalInvested,
+            totalQuantity: state.totalQuantity,
+            avgPrice: state.avgPrice,
+            indicators: {
+              ema5: indicators.ema5, ema20: indicators.ema20, ema60: indicators.ema60,
+              rsi14: indicators.rsi14, atr14: indicators.atr14,
+              macdHist: indicators.macdHist,
+            },
+          });
+          updateSwingState(ticker, update as Record<string, unknown>);
+          return;
+        }
 
         try {
           const sellPrice = exitResult.orderType === 'LIMIT' && exitResult.suggestedPrice
@@ -810,8 +928,41 @@ async function processSwingTicker(
         );
 
         if (addBuyResult.shouldBuy && addBuyResult.suggestedQuantity && addBuyResult.suggestedQuantity > 0) {
-          console.log(`[Swing] ${ticker} 추가매수 신호: ${addBuyResult.reason}`);
+          console.log(`[Swing] ${shadowMode ? '[SHADOW] ' : ''}${ticker} 추가매수 신호: ${addBuyResult.reason}`);
 
+          if (shadowMode) {
+            const addQty = addBuyResult.suggestedQuantity!;
+            const addPrice = currentPrice + getKoreanTickSize(currentPrice);
+            const newRecord: SwingBuyRecord = {
+              price: addPrice, quantity: addQty, amount: addPrice * addQty,
+              date: new Date().toISOString(), reason: 'additional',
+            };
+            const simRecords = [...state.buyRecords, newRecord];
+            const simAvg = calculateAvgPrice(simRecords);
+            console.log(`[Swing] [SHADOW] ${ticker} 가상 추가매수: ${addQty}주 × ${addPrice}원 (평단 ${simAvg.avgPrice.toFixed(0)}원)`);
+            appendShadowTradeLog({
+              timestamp: new Date().toISOString(),
+              action: 'ADDITIONAL_BUY',
+              ticker,
+              stockName,
+              price: addPrice,
+              quantity: addQty,
+              amount: addPrice * addQty,
+              addBuyReason: addBuyResult.reason,
+              avgPriceAfter: Math.round(simAvg.avgPrice),
+              totalQuantityAfter: simAvg.totalQuantity,
+              currentPrice,
+              totalInvested: state.totalInvested,
+              totalQuantity: state.totalQuantity,
+              avgPrice: state.avgPrice,
+              holdingDays: update.holdingDays,
+              indicators: {
+                ema5: indicators.ema5, ema20: indicators.ema20, ema60: indicators.ema60,
+                rsi14: indicators.rsi14, atr14: indicators.atr14,
+                macdHist: indicators.macdHist,
+              },
+            });
+          } else {
           const buyPrice = currentPrice + getKoreanTickSize(currentPrice);
           try {
             const orderRes = await kisClient.submitDomesticOrder(
@@ -843,6 +994,7 @@ async function processSwingTicker(
           } catch (err) {
             console.error(`[Swing] ${ticker} 추가매수 에러:`, (err as Error).message);
           }
+          } // end else (not shadow)
         }
       }
       break;

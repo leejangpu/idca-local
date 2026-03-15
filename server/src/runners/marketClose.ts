@@ -8,13 +8,14 @@
 
 import { config } from '../config';
 import * as localStore from '../lib/localStore';
+import type { AccountStore } from '../lib/localStore';
 import { KisApiClient, getOrRefreshToken } from '../lib/kisApi';
 import { AccountContext } from '../lib/accountContext';
 import { sendTelegramMessage, getUserTelegramChatId } from '../lib/telegram';
 import { generateBuyRecordId, BuyRecord } from '../lib/ddsobCalculator';
 import { markFilledOrders } from '../lib/vrCalculator';
 import { MarketType, getMarketType } from '../lib/marketUtils';
-import { getCommonConfig, getMarketStrategyConfig } from '../lib/configHelper';
+import { getCommonConfig, getMarketStrategyConfig, CommonConfig } from '../lib/configHelper';
 
 // --- 실사오팔V2 TickerConfig 타입 & 추출 (realtimeV2에서 인라인) ---
 
@@ -112,6 +113,7 @@ async function notifyCycleCompleted(
 // --- 메인 처리 함수 ---
 
 async function processMarketClose(market: MarketType, ctx?: AccountContext) {
+  const store: AccountStore = ctx?.store ?? localStore;
   const marketLabel = market === 'overseas' ? '미국' : '한국';
   console.log(`Market close trigger started (${marketLabel})`);
 
@@ -119,7 +121,9 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
     const { userId, accountId } = config;
     const chatId = await getUserTelegramChatId(userId);
 
-    const commonConfig = getCommonConfig();
+    const commonConfig = ctx
+      ? ctx.store.getTradingConfig<CommonConfig>()
+      : getCommonConfig();
     if (!commonConfig) {
       console.log('[MarketClose] No common config found, skipping');
       return;
@@ -135,7 +139,9 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
       console.log(`[MarketClose] No strategy for ${market}, skipping`);
       return;
     }
-    const strategyConfig = getMarketStrategyConfig<any>(market, strategy);
+    const strategyConfig = ctx
+      ? ctx.store.getStrategyConfig<any>(market, strategy)
+      : getMarketStrategyConfig<any>(market, strategy);
 
     // 해당 market에 매칭되는 종목이 있는지 확인
     const tickersToProcess = getTickersForMarket(strategy, strategyConfig, market);
@@ -347,10 +353,10 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
         // --- 계좌 전략별 장 마감 동기화 ---
         if (strategy === 'vr') {
           // VR 계좌: vrState 동기화
-          const vrState = localStore.getState<any>('vrState', ticker);
+          const vrState = store.getState<any>('vrState', ticker);
           if (vrState && holdingData) {
             const evaluation = totalQuantity * currentPrice;
-            localStore.updateState('vrState', ticker, {
+            store.updateState('vrState', ticker, {
               lastQuantity: totalQuantity,
               lastAvgPrice: avgPrice,
               lastEvaluation: evaluation,
@@ -361,7 +367,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
         } else if (strategy === 'realtimeDdsobV2') {
           // 실사오팔V2: EOD 매도 미체결 잔여 확인 (안전망)
           const stateCollName = 'realtimeDdsobV2State';
-          const allStates = localStore.getAllStates<any>(stateCollName);
+          const allStates = store.getAllStates<any>(stateCollName);
 
           // EOD 매도 미체결 + forceStop 미체결 확인
           const pendingEodStates: Array<[string, any]> = [];
@@ -402,7 +408,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
           }
         } else if ((strategy as string) === 'ddsob') {
           // 떨사오팔 계좌: ddsobState 동기화
-          const ddsobState = localStore.getState<any>('ddsobState', ticker);
+          const ddsobState = store.getState<any>('ddsobState', ticker);
 
           if (ddsobState) {
             if (ddsobState.status !== 'active') continue;
@@ -506,7 +512,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
 
             if (buyRecords.length === 0 && hasSell) {
               // 사이클 완료 → 히스토리 아카이브
-              localStore.addCycleHistory({
+              store.addCycleHistory({
                 ticker,
                 market,
                 strategy: 'ddsob',
@@ -529,7 +535,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
                 totalForceSellLoss: newTotalForceSellLoss,
               });
 
-              localStore.updateState('ddsobState', ticker, {
+              store.updateState('ddsobState', ticker, {
                 status: 'completed',
                 buyRecords: [],
                 daysWithoutTrade: 0,
@@ -567,7 +573,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
               }
             } else {
               // 일반 동기화
-              localStore.updateState('ddsobState', ticker, {
+              store.updateState('ddsobState', ticker, {
                 buyRecords,
                 daysWithoutTrade: newDaysWithoutTrade,
                 maxRounds: newMaxRounds,
@@ -588,7 +594,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
           }
         } else {
           // 무한매수법 계좌: 체결 내역 기반 수익 계산 + 사이클 완료 감지 및 동기화
-          const cycleData = localStore.getState<any>('cycles', ticker);
+          const cycleData = store.getState<any>('cycles', ticker);
           if (cycleData) {
             const principal = cycleData.principal || 0;
 
@@ -618,13 +624,13 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
               const hasBuyExec = tickerBuys.length > 0;
 
               if (!quarterMode.isActive && hasSellExec) {
-                localStore.updateState('cycles', ticker, {
+                store.updateState('cycles', ticker, {
                   'quarterMode.isActive': true,
                   updatedAt: new Date().toISOString(),
                 });
                 console.log(`[QuarterMode] Activated for ${ticker}: MOC sell confirmed`);
                 const remainingCash = principal - totalInvested;
-                localStore.updateState('cycles', ticker, {
+                store.updateState('cycles', ticker, {
                   totalInvested, remainingCash, avgPrice, totalQuantity,
                   totalBuyAmount: newTotalBuy, totalSellAmount: newTotalSell,
                   totalRealizedProfit, syncedAt: new Date().toISOString(),
@@ -639,9 +645,9 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
                 const newBuyPerRound = newPrincipal / qSplitCount;
                 console.log(`[QuarterMode] Exiting for ${ticker}: sold=${fmtAmt(market, soldAmount)}, newPrincipal=${fmtAmt(market, newPrincipal)}`);
                 // Read current state, remove quarterMode, update rest
-                const currentState = localStore.getState<any>('cycles', ticker) || {};
+                const currentState = store.getState<any>('cycles', ticker) || {};
                 const { quarterMode: _qm, ...rest } = currentState;
-                localStore.setState('cycles', ticker, {
+                store.setState('cycles', ticker, {
                   ...rest,
                   principal: newPrincipal,
                   buyPerRound: newBuyPerRound,
@@ -659,7 +665,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
 
               if (quarterMode.isActive && hasBuyExec) {
                 const newRound = (quarterMode.round || 0) + 1;
-                localStore.updateState('cycles', ticker, {
+                store.updateState('cycles', ticker, {
                   quarterMode: { ...quarterMode, round: newRound },
                   updatedAt: new Date().toISOString(),
                 });
@@ -688,12 +694,12 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
                 totalRealizedProfit,
                 finalProfitRate: principal > 0 ? totalRealizedProfit / principal : 0,
               };
-              localStore.addCycleHistory(historyData);
+              store.addCycleHistory(historyData);
 
               // Remove quarterMode and update status
-              const currentState = localStore.getState<any>('cycles', ticker) || {};
+              const currentState = store.getState<any>('cycles', ticker) || {};
               const { quarterMode: _qm2, ...restState } = currentState;
-              localStore.setState('cycles', ticker, {
+              store.setState('cycles', ticker, {
                 ...restState,
                 status: 'completed',
                 completedAt: new Date().toISOString(),
@@ -715,7 +721,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
               }
             } else {
               const remainingCash = principal - totalInvested;
-              localStore.updateState('cycles', ticker, {
+              store.updateState('cycles', ticker, {
                 totalInvested,
                 remainingCash,
                 avgPrice,
@@ -762,7 +768,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
         // --- VR 잔량주문 체결 추적 ---
         if (strategy === 'vr' && todayExecutions.length > 0) {
           for (const vrTicker of tickersToProcess) {
-            const vrState = localStore.getState<any>('vrState', vrTicker);
+            const vrState = store.getState<any>('vrState', vrTicker);
 
             if (vrState && vrState.pendingOrders) {
               const vrTickerExecutions = todayExecutions
@@ -776,7 +782,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
 
               if (vrTickerExecutions.length > 0) {
                 const updatedOrders = markFilledOrders(vrState.pendingOrders, vrTickerExecutions);
-                localStore.updateState('vrState', vrTicker, {
+                store.updateState('vrState', vrTicker, {
                   pendingOrders: updatedOrders,
                   updatedAt: new Date().toISOString(),
                 });
@@ -794,8 +800,8 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
             const fetchedAtKey = market === 'overseas' ? 'fetchedAtUS' : 'fetchedAtKR';
 
             if (allOrdersOutput.length > 0) {
-              // localStore: tradeLogs에 merge 방식으로 저장
-              const existingLog = localStore.getLogs<any>('tradeLogs', todayStr);
+              // tradeLogs에 merge 방식으로 저장
+              const existingLog = store.getLogs<any>('tradeLogs', todayStr);
               // tradeLogs는 단일 객체로 저장 (배열 append가 아닌 merge)
               const logEntry = {
                 date: todayStr,
@@ -808,12 +814,20 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
               if (existingLog.length > 0 && typeof existingLog[0] === 'object') {
                 const merged = { ...existingLog[0], ...logEntry };
                 // 파일 직접 덮어쓰기 (appendLog 대신)
-                localStore.writeJson(
-                  localStore.paths.logFile('tradeLogs', todayStr),
-                  [merged]
-                );
+                if (ctx) {
+                  const path = require('path');
+                  const accountLogPath = path.join(
+                    config.dataDir, 'accounts', ctx.accountId, 'logs', 'tradeLogs', `${todayStr}.json`
+                  );
+                  localStore.writeJson(accountLogPath, [merged]);
+                } else {
+                  localStore.writeJson(
+                    localStore.paths.logFile('tradeLogs', todayStr),
+                    [merged]
+                  );
+                }
               } else {
-                localStore.appendLog('tradeLogs', todayStr, logEntry);
+                store.appendLog('tradeLogs', todayStr, logEntry);
               }
               console.log(`[TradeLog] Saved ${allOrdersOutput.length} ${market} orders`);
             }
@@ -830,7 +844,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
           try {
             // 오늘 완료된 사이클 조회 (market 필터)
             const todayDateStr = new Date().toISOString().slice(0, 10);
-            const allCycleHistory = localStore.getAllCycleHistory<any>();
+            const allCycleHistory = store.getAllCycleHistory<any>();
             const todayCompletedCycles = allCycleHistory.filter(c =>
               c.strategy === strategyId &&
               c.market === market &&
@@ -857,7 +871,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
             }));
 
             // 진행 중인 사이클 조회 (market 필터링)
-            const allActiveStates = localStore.getAllStates<any>(stateCollName);
+            const allActiveStates = store.getAllStates<any>(stateCollName);
             const activeCycles: Array<{
               ticker: string;
               buyRounds: number;
@@ -938,7 +952,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
           // 각 ticker의 다음 매수 예상 금액
           const nextBuyEstimates: Array<{ ticker: string; amount: number }> = [];
           for (const t of tickersToProcess) {
-            const cd = localStore.getState<any>('cycles', t);
+            const cd = store.getState<any>('cycles', t);
             if (!cd) continue;
 
             if (cd.status === 'completed') {

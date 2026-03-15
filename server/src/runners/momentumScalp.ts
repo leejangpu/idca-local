@@ -469,6 +469,33 @@ async function handleNewBuy(
         occupiedSet.add(target.ticker);
 
         console.log(`👻 [QuickScalp-Shadow] ${target.name}(${target.ticker}) — 가상 매수: ${quantity}주 @ ${buyPrice.toLocaleString()}원 (bid+1틱) TP=${tp.toLocaleString()} SL=${sl.toLocaleString()}`);
+
+        // 쉐도우 진입 로그 파일 기록
+        store.appendLog('scalpShadowLogs', todayStr, {
+          type: 'ENTRY',
+          ticker: target.ticker,
+          stockName: target.name,
+          market: 'domestic',
+          strategy: 'quickScalp',
+          entryPrice: buyPrice,
+          entryQuantity: quantity,
+          entryAmount: buyPrice * quantity,
+          allocatedAmount: refill.amountPerSlot,
+          targetPrice: tp,
+          stopLossPrice: sl,
+          // 진입 조건
+          entryBoxPos: entryConditions.entryBoxPos,
+          boxRangePct: entryConditions.boxRangePct,
+          boxHigh: boxResult.boxHigh,
+          boxLow: boxResult.boxLow,
+          spreadTicks: entryConditions.spreadTicks,
+          targetTicks: entryConditions.targetTicks,
+          // 시장 가격
+          currentPrice,
+          askPrice,
+          bidPrice,
+          createdAt: new Date().toISOString(),
+        });
       } else {
         // ── 실전 모드: 실제 매수 주문 ──
         const orderResult = await kisClient.submitDomesticOrder(
@@ -639,6 +666,7 @@ function writeShadowTradeLog(
   const todayStr = getKSTDateString();
   const store = ctx?.store ?? localStore;
   store.appendLog('scalpShadowLogs', todayStr, {
+    type: 'EXIT',
     ticker,
     stockName,
     market: 'domestic',
@@ -654,6 +682,7 @@ function writeShadowTradeLog(
     exitReason,
     profitAmount,
     profitRate,
+    profitRatePct: Number((profitRate * 100).toFixed(2)),
     // 진입 조건
     entryBoxPos: entryBoxPos ?? null,
     boxRangePct: boxRangePct ?? null,
@@ -793,6 +822,18 @@ async function processSellAccount(
           console.error(`[QuickScalp-Sell] Close auction pending_buy cancel failed ${state.ticker}:`, cancelErr);
         }
         await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      if (scalpConfig.shadowMode) {
+        store.appendLog('scalpShadowLogs', todayStr, {
+          type: 'CANCEL',
+          ticker: state.ticker,
+          stockName: state.stockName || state.ticker,
+          market: 'domestic',
+          strategy: 'quickScalp',
+          reason: 'market_close_pending_buy_cancel',
+          allocatedAmount: state.allocatedAmount,
+          createdAt: new Date().toISOString(),
+        });
       }
       deleteMomentumScalpState(state.ticker);
       console.log(`[QuickScalp-Sell] ${state.ticker} pending_buy 취소 (장마감)${scalpConfig.shadowMode ? ' [shadow]' : ''}`);
