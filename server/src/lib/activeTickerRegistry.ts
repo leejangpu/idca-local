@@ -27,54 +27,41 @@ function getMarketFromTicker(ticker: string): 'domestic' | 'overseas' {
   return /^[A-Z]/.test(ticker) ? 'overseas' : 'domestic';
 }
 
-/** 모든 전략의 활성 종목을 수집 */
+/** 특정 collection의 활성 종목을 맵에 추가하는 헬퍼 */
+function collectActive(
+  map: Map<string, ActiveTickerEntry>,
+  store: { getAllStates<T>(col: string): Map<string, T> },
+  collection: string,
+  strategy: string,
+  marketOverride?: 'domestic' | 'overseas',
+): void {
+  const states = store.getAllStates<Record<string, unknown>>(collection);
+  for (const [ticker, s] of states) {
+    const status = String(s.status || '');
+    if (collection === 'cycles' ? status !== 'completed' : isActive(status)) {
+      const market = marketOverride ?? ((s.market as string) || getMarketFromTicker(ticker));
+      map.set(ticker, { ticker, strategy, market: market as 'domestic' | 'overseas', status });
+    }
+  }
+}
+
+/** 모든 전략의 활성 종목을 수집 (글로벌 + 계좌별 store) */
 function buildRegistry(): Map<string, ActiveTickerEntry> {
   const map = new Map<string, ActiveTickerEntry>();
 
-  // momentumScalp (domestic)
-  const scalpStates = localStore.getAllStates<Record<string, unknown>>('momentumScalpState');
-  for (const [ticker, s] of scalpStates) {
-    const status = String(s.status || '');
-    if (isActive(status)) {
-      map.set(ticker, { ticker, strategy: 'momentumScalp', market: 'domestic', status });
-    }
+  // 수집 대상 store 목록: 글로벌 + 각 계좌
+  const stores: Array<{ getAllStates<T>(col: string): Map<string, T> }> = [localStore];
+  const registry = localStore.getAccountRegistry();
+  for (const account of registry.accounts) {
+    stores.push(localStore.forAccount(account.id));
   }
 
-  // realtimeDdsobV2 (domestic + overseas)
-  const rdStates = localStore.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
-  for (const [ticker, s] of rdStates) {
-    const status = String(s.status || '');
-    if (isActive(status)) {
-      const market = (s.market as string) || getMarketFromTicker(ticker);
-      map.set(ticker, { ticker, strategy: 'realtimeDdsobV2', market: market as 'domestic' | 'overseas', status });
-    }
-  }
-
-  // swing (domestic)
-  const swingStates = localStore.getAllStates<Record<string, unknown>>('swingState');
-  for (const [ticker, s] of swingStates) {
-    const status = String(s.status || '');
-    if (isActive(status)) {
-      map.set(ticker, { ticker, strategy: 'swing', market: 'domestic', status });
-    }
-  }
-
-  // infinite (overseas) — cycles
-  const cycles = localStore.getAllStates<Record<string, unknown>>('cycles');
-  for (const [ticker, s] of cycles) {
-    const status = String(s.status || 'active');
-    if (status !== 'completed') {
-      map.set(ticker, { ticker, strategy: 'infinite', market: 'overseas', status });
-    }
-  }
-
-  // vr (overseas)
-  const vrStates = localStore.getAllStates<Record<string, unknown>>('vrState');
-  for (const [ticker, s] of vrStates) {
-    const status = String(s.status || 'active');
-    if (isActive(status)) {
-      map.set(ticker, { ticker, strategy: 'vr', market: 'overseas', status });
-    }
+  for (const store of stores) {
+    collectActive(map, store, 'momentumScalpState', 'momentumScalp', 'domestic');
+    collectActive(map, store, 'realtimeDdsobV2State', 'realtimeDdsobV2');
+    collectActive(map, store, 'swingState', 'swing', 'domestic');
+    collectActive(map, store, 'cycles', 'infinite', 'overseas');
+    collectActive(map, store, 'vrState', 'vr', 'overseas');
   }
 
   return map;

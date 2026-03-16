@@ -856,6 +856,15 @@ export async function processAutoSelectStocks(
   const selectedNames = selected.map((s, i) => `${i + 1}. ${s.name}(${s.ticker}) ${s.price.toLocaleString()}원`).join('\n');
   console.log(`[AutoSelect] ${mode === 'refill' ? 'Refill' : 'Selected'} ${selected.length} stocks:\n${selectedNames}`);
 
+  store.appendLog('realtimeV2AutoSelectLogs', getKSTDateString(), {
+    mode: selectionMode,
+    slotsToFill,
+    selected: selected.length,
+    excluded: Array.from(excludeTickers),
+    result: selected.map(s => ({ ticker: s.ticker, name: s.name })),
+    checkedAt: new Date().toISOString(),
+  });
+
   return newAutoTickers;
 }
 

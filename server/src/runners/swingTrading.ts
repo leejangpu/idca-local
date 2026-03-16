@@ -468,7 +468,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
   const swingConfig = ctx
     ? ctx.store.getStrategyConfig<SwingConfig>('domestic', 'swing')
     : getMarketStrategyConfig<SwingConfig>('domestic', 'swing');
-  if (!swingConfig || swingConfig.tickers.length === 0) {
+  if (!swingConfig) {
     return 0;
   }
 
@@ -521,8 +521,10 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
   }
   const tickerContexts: TickerContext[] = [];
 
+  const configTickerSet = new Set<string>();
   for (const tickerConfig of swingConfig.tickers) {
     const { ticker } = tickerConfig;
+    configTickerSet.add(ticker);
 
     let state = stateMap.get(ticker) || null;
     if (!state) {
@@ -534,6 +536,25 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
     if (state.status === 'completed') continue;
     if (currentMinute % state.checkInterval !== 0) continue;
     tickerContexts.push({ tickerConfig, state });
+  }
+
+  // EOD 자동선정으로 holding/trailing된 종목이 tickers에 없는 경우 보충
+  for (const [ticker, state] of stateMap) {
+    if (configTickerSet.has(ticker)) continue;
+    if (state.status !== 'holding' && state.status !== 'trailing') continue;
+    const tickerConfig: SwingTickerConfig = {
+      ticker,
+      stockName: state.stockName || ticker,
+      principal: swingConfig.globalPrincipal / swingConfig.maxPositions,
+      profitPercent: swingConfig.defaultProfitPercent,
+      stopLossPercent: swingConfig.defaultStopLossPercent,
+      trailingStopPercent: swingConfig.trailingStopPercent,
+      maxAdditionalBuys: 0,
+      additionalBuyDropPercent: 0,
+      entryStrategy: state.entryStrategy || 'pullback',
+    };
+    tickerContexts.push({ tickerConfig, state });
+    console.log(`[Swing] ${ticker} (${state.stockName}) 자동선정 보유종목 — 장중 관리 포함`);
   }
 
   // === PASS 1: 보유 종목(holding/trailing) 먼저 처리 (랭킹 불필요) ===

@@ -1632,6 +1632,22 @@ export async function processRealtimeDdsobV2Trading(
 
   console.log(`[RealtimeDdsobV2:${tag}] Calc result: action=${calcResult.action}, reason=${calcResult.actionReason}, buys=${calcResult.buyOrders.length}, sells=${calcResult.sellOrders.length}`);
 
+  store.appendLog('realtimeV2TradingLogs', todayStr, {
+    ticker,
+    action: calcResult.action,
+    reason: calcResult.actionReason,
+    buys: calcResult.buyOrders.length,
+    sells: calcResult.sellOrders.length,
+    currentPrice,
+    indicators: {
+      ema9_1m: (state.indicators as IndicatorsState)?.ema9_1m ?? null,
+      ema20_5m: (state.indicators as IndicatorsState)?.ema20_5m ?? null,
+      rsi14_1m: (state.indicators as IndicatorsState)?.rsi14_1m != null ? parseFloat(((state.indicators as IndicatorsState).rsi14_1m as number).toFixed(2)) : null,
+      rsi14_5m: (state.indicators as IndicatorsState)?.rsi14_5m ?? null,
+    },
+    checkedAt: new Date().toISOString(),
+  });
+
   if (calcResult.action === 'hold') {
     // sell-only 모드: 매수 관련 hold 로직 스킵, 상태만 갱신
     if (sellOnly) {

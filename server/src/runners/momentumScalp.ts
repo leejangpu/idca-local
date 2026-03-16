@@ -73,6 +73,12 @@ const HOLDING_TIMEOUT_MINUTES = 5;
 // pending_buy 타임아웃 (60초 hard — 신호 stale 방지)
 const PENDING_BUY_HARD_TIMEOUT_MS = 60 * 1000;
 
+// 매도 체크 스냅샷 — 매 라운드 최신값 덮어쓰기, 분당 1회 flush
+const sellCheckSnapshots = new Map<string, Record<string, unknown>>();
+
+// 보유 중 가격 궤적 — 5초 간격 bid/current 기록, EXIT 시 함께 저장
+const priceTrails = new Map<string, Array<{ t: string; bid: number; cur: number }>>();
+
 // ========================================
 // 매수 트리거 (1분 간격)
 // ========================================
@@ -297,6 +303,15 @@ async function handleNewBuy(
     store
   );
 
+  store.appendLog('scalpScanLogs', todayStr, {
+    type: 'SLOT_STATUS',
+    fillableSlots: refill.fillableSlotCount,
+    amountPerSlot: refill.amountPerSlot,
+    occupiedTickers: refill.occupiedTickers,
+    skippedReason: refill.skippedReason || null,
+    checkedAt: new Date().toISOString(),
+  });
+
   if (refill.fillableSlotCount <= 0) {
     console.log(`[QuickScalp] No fillable slots (reason: ${refill.skippedReason || 'full'})`);
     return;
@@ -325,6 +340,14 @@ async function handleNewBuy(
     return amtB - amtA;
   });
   const topCandidates = candidates.slice(0, MAX_EVAL_CANDIDATES);
+
+  store.appendLog('scalpScanLogs', todayStr, {
+    type: 'CONDITION_RESULT',
+    conditionSeq: scalpConfig.conditionSeq,
+    totalCandidates: candidates.length,
+    candidates: topCandidates.map(t => ({ ticker: t.code, name: t.name, tradeAmt: t.trade_amt })),
+    checkedAt: new Date().toISOString(),
+  });
 
   console.log(`📊 [QuickScalp] 조건검색 ${candidates.length}개 → 거래대금 상위 ${topCandidates.length}개 평가`);
 
@@ -511,6 +534,10 @@ async function handleNewBuy(
           currentPrice,
           askPrice,
           bidPrice,
+          // 진입 시점 분봉 (최근 10개 OHLC)
+          recentBars: minuteBars.slice(-10).map(b => ({
+            t: b.time, o: b.open, h: b.high, l: b.low, c: b.close,
+          })),
           createdAt: new Date().toISOString(),
         });
       } else {
@@ -710,8 +737,13 @@ function writeShadowTradeLog(
     bestBidAtExit: bestBidAtExit ?? null,
     currentPriceAtExit: currentPriceAtExit ?? null,
     timeToExitSec,
+    // 보유 중 가격 궤적 (5초 간격 bid/current)
+    priceTrail: priceTrails.get(ticker) || [],
     createdAt: new Date().toISOString(),
   });
+
+  // trail 정리
+  priceTrails.delete(ticker);
 
   console.log(`👻 [QuickScalp-Shadow] TradeLog: ${ticker} ${exitReason} ${(profitRate * 100).toFixed(2)}% (${timeToExitSec}s)`);
 }
@@ -1038,6 +1070,16 @@ async function processSellAccount(
       await new Promise(resolve => setTimeout(resolve, EXIT_CHECK_INTERVAL_MS));
     }
   }
+
+  // 루프 종료 — HOLD 스냅샷 분당 1회 flush
+  if (sellCheckSnapshots.size > 0) {
+    const flushStore = ctx?.store ?? localStore;
+    const flushDate = getKSTDateString();
+    for (const snapshot of sellCheckSnapshots.values()) {
+      flushStore.appendLog('scalpSellCheckLogs', flushDate, snapshot);
+    }
+    sellCheckSnapshots.clear();
+  }
 }
 
 /**
@@ -1075,31 +1117,36 @@ async function handleSellCheck(
     return accessToken;
   }
 
+  // 가격 궤적 기록
+  if (!priceTrails.has(ticker)) priceTrails.set(ticker, []);
+  priceTrails.get(ticker)!.push({
+    t: new Date().toISOString().slice(11, 19),
+    bid: bidPrice,
+    cur: currentPrice,
+  });
+
+  // 보유시간 계산
+  let holdingMinutes = 0;
+  if (state.enteredAt) {
+    holdingMinutes = getKRMarketMinutesBetween(new Date(state.enteredAt).getTime(), Date.now());
+  }
+
   // 보유시간 타임아웃 체크 (5분 기본, 수익 중이면 6분까지 연장)
   // 수익 판단은 왕복 비용(수수료+세금) 차감 후 순수익 기준
   const ROUND_TRIP_COST_PCT = 0.0023; // ~0.23% (수수료 0.015%×2 + 세금 0.18%, BanKIS 기준)
   let isTimeout = false;
-  if (state.enteredAt) {
-    const enteredMs = new Date(state.enteredAt).getTime();
-    const nowMs = Date.now();
-    const holdingMinutes = getKRMarketMinutesBetween(enteredMs, nowMs);
+  if (holdingMinutes >= HOLDING_TIMEOUT_MINUTES) {
+    const breakEvenPrice = entryPrice * (1 + ROUND_TRIP_COST_PCT);
+    const isNetProfitable = bidPrice > breakEvenPrice;
 
-    if (holdingMinutes >= HOLDING_TIMEOUT_MINUTES) {
-      const breakEvenPrice = entryPrice * (1 + ROUND_TRIP_COST_PCT);
-      const isNetProfitable = bidPrice > breakEvenPrice;
-
-      if (!isNetProfitable) {
-        // 순손실 중 → 5분에 즉시 컷
-        isTimeout = true;
-        console.log(`[QuickScalp-Sell] ${ticker} 보유 ${holdingMinutes}분, 순손실 (bid ${bidPrice} <= breakEven ${Math.ceil(breakEvenPrice)}) → 즉시 timeout`);
-      } else if (holdingMinutes >= HOLDING_TIMEOUT_MINUTES + 1) {
-        // 순수익 중이었지만 6분(연장 한도) 도달 → 강제 timeout
-        isTimeout = true;
-        console.log(`[QuickScalp-Sell] ${ticker} 보유 ${holdingMinutes}분, 순수익 중이나 연장 한도(${HOLDING_TIMEOUT_MINUTES + 1}분) 도달 → timeout`);
-      } else {
-        // 순수익 중 + 5분 도달 → 1분 연장 (TP/SL에 맡김)
-        console.log(`[QuickScalp-Sell] ${ticker} 보유 ${holdingMinutes}분, 순수익 (bid ${bidPrice} > breakEven ${Math.ceil(breakEvenPrice)}) → 1분 연장`);
-      }
+    if (!isNetProfitable) {
+      isTimeout = true;
+      console.log(`[QuickScalp-Sell] ${ticker} 보유 ${holdingMinutes}분, 순손실 (bid ${bidPrice} <= breakEven ${Math.ceil(breakEvenPrice)}) → 즉시 timeout`);
+    } else if (holdingMinutes >= HOLDING_TIMEOUT_MINUTES + 1) {
+      isTimeout = true;
+      console.log(`[QuickScalp-Sell] ${ticker} 보유 ${holdingMinutes}분, 순수익 중이나 연장 한도(${HOLDING_TIMEOUT_MINUTES + 1}분) 도달 → timeout`);
+    } else {
+      console.log(`[QuickScalp-Sell] ${ticker} 보유 ${holdingMinutes}분, 순수익 (bid ${bidPrice} > breakEven ${Math.ceil(breakEvenPrice)}) → 1분 연장`);
     }
   }
 
@@ -1117,12 +1164,49 @@ async function handleSellCheck(
     });
 
     if (!exitResult.shouldSell || !exitResult.exitReason) {
+      // HOLD 결과를 인메모리에 저장 (루프 종료 후 분당 1회 flush)
+      sellCheckSnapshots.set(ticker, {
+        ticker,
+        stockName: stockName || ticker,
+        action: 'HOLD' as const,
+        entryPrice,
+        currentPrice,
+        bidPrice,
+        targetPrice,
+        stopLossPrice,
+        profitPct: parseFloat(((bidPrice - entryPrice) / entryPrice * 100).toFixed(2)),
+        targetGapPct: parseFloat(((targetPrice - bidPrice) / targetPrice * 100).toFixed(2)),
+        stopGapPct: parseFloat(((bidPrice - stopLossPrice) / stopLossPrice * 100).toFixed(2)),
+        holdingMin: holdingMinutes,
+        timeoutMin: HOLDING_TIMEOUT_MINUTES,
+        checkedAt: new Date().toISOString(),
+      });
       return accessToken;
     }
     exitReason = exitResult.exitReason;
   }
 
   console.log(`[QuickScalp-Sell] ${ticker} ${exitReason} 감지 (시장가): bestBid=${bidPrice} 현재가=${currentPrice} 목표=${targetPrice} 손절=${stopLossPrice}`);
+
+  // 매도 실행 로그
+  {
+    const store = ctx?.store ?? localStore;
+    const todayStr = getKSTDateString();
+    const profitPct = ((bidPrice - entryPrice) / entryPrice * 100).toFixed(2);
+    store.appendLog('scalpSellCheckLogs', todayStr, {
+      ticker,
+      stockName: stockName || ticker,
+      action: exitReason.toUpperCase(),
+      entryPrice,
+      currentPrice,
+      bidPrice,
+      targetPrice,
+      stopLossPrice,
+      profitPct: parseFloat(profitPct),
+      holdingMin: holdingMinutes,
+      checkedAt: new Date().toISOString(),
+    });
+  }
 
   if (shadowMode) {
     // ── 쉐도우 모드: 주문 없이 가상 체결 (bestBid 기준) ──

@@ -1594,6 +1594,7 @@
           html += `<div class="dash-section"><div class="dash-section-title">실사오팔v2 상태 <span class="dash-count">${rdItems.length}종목</span></div>`;
           rdItems.forEach(r => {
             const ticker = r.ticker || r._ticker || 'unknown';
+            const name = r.stockName || '';
             const status = r.status || 'idle';
             const buyCount = Array.isArray(r.buyRecords) ? r.buyRecords.length : 0;
             const splitCount = r.splitCount || '-';
@@ -1601,7 +1602,7 @@
               <div class="dash-card" style="padding:12px 16px">
                 <div class="dash-row" style="padding:0;border:none">
                   <div class="dash-row-left">
-                    <span class="dash-ticker" style="font-size:0.92em">${ticker}</span>
+                    <span class="dash-ticker" style="font-size:0.92em">${name ? name + ' ' : ''}${ticker}</span>
                     <span class="dash-badge ${status === 'active' || status === 'buying' ? 'dash-badge-active' : 'dash-badge-done'}">${status}</span>
                   </div>
                   <div class="dash-row-right">매수 ${buyCount} / ${splitCount}분할</div>
@@ -1616,13 +1617,14 @@
           html += `<div class="dash-section"><div class="dash-section-title">스캘핑 상태 <span class="dash-count">${scalpItems.length}종목</span></div>`;
           scalpItems.forEach(s => {
             const ticker = s.ticker || s._ticker || 'unknown';
+            const name = s.stockName || '';
             const status = s.status || 'idle';
             const entryPrice = s.entryPrice;
             html += `
               <div class="dash-card" style="padding:12px 16px">
                 <div class="dash-row" style="padding:0;border:none">
                   <div class="dash-row-left">
-                    <span class="dash-ticker" style="font-size:0.92em">${ticker}</span>
+                    <span class="dash-ticker" style="font-size:0.92em">${name ? name + ' ' : ''}${ticker}</span>
                     <span class="dash-badge ${status === 'holding' || status === 'active' ? 'dash-badge-active' : 'dash-badge-done'}">${status}</span>
                   </div>
                   <div class="dash-row-right">${entryPrice ? '진입 ' + fmtKRW(entryPrice) : ''}</div>
