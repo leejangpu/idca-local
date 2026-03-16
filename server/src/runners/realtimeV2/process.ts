@@ -708,6 +708,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   strategyId: AccountStrategy = 'realtimeDdsobV2',
   ctx?: AccountContext,
 ): Promise<{ success: boolean; soldQty: number; message: string }> {
+  const store = ctx?.store ?? localStore;
   const tag = market === 'domestic' ? 'KR' : 'US';
   console.log(`[ForceStop:${tag}] ticker=${ticker}`);
 
@@ -722,7 +723,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
 
   // 2. state 조회
-  const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
+  const state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
 
   const fsQuoteExcd = state?.exchangeCode as string | undefined;
   const fsOrderExcd = fsQuoteExcd ? KisApiClient.quoteToOrderExchangeCode(fsQuoteExcd) : KisApiClient.getExchangeCode(ticker);
@@ -821,7 +822,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   const estimatedPrice = (state.previousPrice as number) || 0;
   const estimatedProfit = ((state.totalRealizedProfit as number) || 0) + (estimatedPrice * totalQty - totalBuyAmount);
 
-  localStore.addCycleHistory({
+  store.addCycleHistory({
     ticker,
     market,
     strategy: strategyId,
@@ -859,7 +860,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   });
 
   // 6. state 삭제
-  localStore.deleteState('realtimeDdsobV2State', ticker);
+  store.deleteState('realtimeDdsobV2State', ticker);
 
   // 7. config에서 종목 제거
   removeTickerFromConfig(ticker, market, strategyId);
@@ -883,6 +884,7 @@ export async function processRealtimeDdsobV2Trading(
   options?: { sellOnly?: boolean; strategyId?: AccountStrategy },
   ctx?: AccountContext,
 ): Promise<void> {
+  const store = ctx?.store ?? localStore;
   const strategyId: AccountStrategy = options?.strategyId || 'realtimeDdsobV2';
   const sellOnly = options?.sellOnly ?? false;
   const { ticker, splitCount, profitPercent, intervalMinutes, principal: configPrincipal, minDropPercent, forceSellCandles } = tickerConfig;
@@ -968,12 +970,12 @@ export async function processRealtimeDdsobV2Trading(
   }
 
   // ======== 체결 내역 확인 & state 동기화 ========
-  let state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
+  let state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
 
   // 전일 EOD 매도 미체결 잔여 정리
   if (state?.eodSellPending) {
     console.warn(`[RealtimeDdsobV2:${tag}] Clearing stale eodSellPending for ${ticker} (previous day leftover)`);
-    localStore.updateState('realtimeDdsobV2State', ticker, {
+    store.updateState('realtimeDdsobV2State', ticker, {
       eodSellPending: null,
       eodSellOrderNo: null,
       eodSellDate: null,
@@ -1065,7 +1067,7 @@ export async function processRealtimeDdsobV2Trading(
       const retryStateUpdate = async (data: Record<string, unknown>, label: string): Promise<boolean> => {
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            localStore.updateState('realtimeDdsobV2State', ticker, data);
+            store.updateState('realtimeDdsobV2State', ticker, data);
             return true;
           } catch (err) {
             console.error(`[RealtimeDdsobV2:${tag}] ${label} attempt ${attempt}/2 failed:`, err);
@@ -1189,7 +1191,7 @@ export async function processRealtimeDdsobV2Trading(
 
         // 2) 사이클 이력 저장 (중복 방지: localStore에서는 단순 추가)
         try {
-          localStore.addCycleHistory({
+          store.addCycleHistory({
             ticker,
             market,
             strategy: strategyId,
@@ -1242,7 +1244,7 @@ export async function processRealtimeDdsobV2Trading(
         }
 
         state = null;
-        try { localStore.deleteState('realtimeDdsobV2State', ticker); } catch (e) {
+        try { store.deleteState('realtimeDdsobV2State', ticker); } catch (e) {
           console.warn(`[RealtimeDdsobV2:${tag}] state delete failed (will be handled on next tick):`, e);
         }
 
@@ -1280,7 +1282,7 @@ export async function processRealtimeDdsobV2Trading(
       } else if (hadTrade) {
         const success = await retryStateUpdate(fillStateData, 'Fill state update');
         if (!success) throw new Error('Fill state update failed after retries');
-        state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
+        state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
       } else {
         // 체결 없음: lastOrderNumbers 클리어만
         const cleared = await retryStateUpdate({
@@ -1439,7 +1441,7 @@ export async function processRealtimeDdsobV2Trading(
     const amountPerRound = principal / splitCount;
 
     // 이전 사이클 번호 조회 — localStore에서 cycleHistory 검색
-    const allCycles = localStore.getAllCycleHistory<Record<string, unknown>>();
+    const allCycles = store.getAllCycleHistory<Record<string, unknown>>();
     const matchingCycles = allCycles
       .filter(c => c.ticker === ticker && c.strategy === strategyId)
       .sort((a, b) => ((b.cycleNumber as number) || 0) - ((a.cycleNumber as number) || 0));
@@ -1492,7 +1494,7 @@ export async function processRealtimeDdsobV2Trading(
     const peakCandles = tickerConfig.peakCheckCandles ?? 10;
     state.recentPrices = peakCandles > 0 ? recentCloses1m.slice(-peakCandles) : [];
 
-    localStore.setState('realtimeDdsobV2State', ticker, state);
+    store.setState('realtimeDdsobV2State', ticker, state);
     console.log(`[RealtimeDdsobV2:${tag}] New cycle started: principal=${fp(principal)}, amountPerRound=${fp(amountPerRound)}, previousPrice=${fp(currentPrice)}`);
 
     if (chatId) {
@@ -1515,7 +1517,7 @@ export async function processRealtimeDdsobV2Trading(
       console.log(`[RealtimeDdsobV2:${tag}] Cycle completed, stopAfterCycleEnd=true`);
       return;
     }
-    localStore.deleteState('realtimeDdsobV2State', ticker);
+    store.deleteState('realtimeDdsobV2State', ticker);
     console.log(`[RealtimeDdsobV2:${tag}] Auto-restart: deleted completed state`);
     return;
   }
@@ -1536,7 +1538,7 @@ export async function processRealtimeDdsobV2Trading(
   if (isFirstBuy && maxRounds < splitCount) {
     console.log(`[RealtimeDdsobV2:${tag}] Resetting maxRounds from ${maxRounds} to ${splitCount}`);
     maxRounds = splitCount;
-    localStore.updateState('realtimeDdsobV2State', ticker, { maxRounds: splitCount });
+    store.updateState('realtimeDdsobV2State', ticker, { maxRounds: splitCount });
   }
 
   // ======== KIS API 잔고 조회 (평단가 기반 매도용) ========
@@ -1652,7 +1654,7 @@ export async function processRealtimeDdsobV2Trading(
         }
         holdUpdate.recentPrices = holdRecentPrices;
       }
-      localStore.updateState('realtimeDdsobV2State', ticker, holdUpdate);
+      store.updateState('realtimeDdsobV2State', ticker, holdUpdate);
       return;
     }
 
@@ -1672,7 +1674,7 @@ export async function processRealtimeDdsobV2Trading(
           );
         }
       } else {
-        localStore.deleteState('realtimeDdsobV2State', ticker);
+        store.deleteState('realtimeDdsobV2State', ticker);
         if (tickerConfig.autoSelected) {
           const latestConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
           if (latestConfig) {
@@ -1702,7 +1704,7 @@ export async function processRealtimeDdsobV2Trading(
       const newCandlesBeforeFirstBuy = ((state.candlesBeforeFirstBuy as number) || 0) + 1;
       if (newCandlesBeforeFirstBuy >= FIRST_BUY_TIMEOUT_CANDLES) {
         console.log(`[RealtimeDdsobV2:${tag}] First buy timeout: ${ticker} no buy in ${newCandlesBeforeFirstBuy} candles (${newCandlesBeforeFirstBuy * intervalMinutes}min) → removing`);
-        localStore.deleteState('realtimeDdsobV2State', ticker);
+        store.deleteState('realtimeDdsobV2State', ticker);
         const latestConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
         if (latestConfig) {
           const latestTickers = extractTickerConfigsV2(latestConfig as unknown as Record<string, unknown>);
@@ -1745,7 +1747,7 @@ export async function processRealtimeDdsobV2Trading(
       }
       holdUpdate.recentPrices = holdRecentPrices;
     }
-    localStore.updateState('realtimeDdsobV2State', ticker, holdUpdate);
+    store.updateState('realtimeDdsobV2State', ticker, holdUpdate);
     return;
   }
 
@@ -1760,7 +1762,7 @@ export async function processRealtimeDdsobV2Trading(
     if (state.indicators) {
       limitUpdate.indicators = state.indicators;
     }
-    localStore.updateState('realtimeDdsobV2State', ticker, limitUpdate);
+    store.updateState('realtimeDdsobV2State', ticker, limitUpdate);
     return;
   }
   if (market === 'domestic' && domesticUpperLimit > 0 && domesticLowerLimit > 0) {
@@ -1975,7 +1977,7 @@ export async function processRealtimeDdsobV2Trading(
     const newCandlesBeforeFirstBuy = ((state.candlesBeforeFirstBuy as number) || 0) + 1;
     if (newCandlesBeforeFirstBuy >= FIRST_BUY_TIMEOUT_CANDLES) {
       console.log(`[RealtimeDdsobV2:${tag}] First buy timeout: ${ticker} no buy in ${newCandlesBeforeFirstBuy} candles (${newCandlesBeforeFirstBuy * intervalMinutes}min) → removing`);
-      localStore.deleteState('realtimeDdsobV2State', ticker);
+      store.deleteState('realtimeDdsobV2State', ticker);
       const latestConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
       if (latestConfig) {
         const latestTickers = extractTickerConfigsV2(latestConfig as unknown as Record<string, unknown>);
@@ -2000,11 +2002,11 @@ export async function processRealtimeDdsobV2Trading(
   }
 
   try {
-    localStore.updateState('realtimeDdsobV2State', ticker, updateData);
+    store.updateState('realtimeDdsobV2State', ticker, updateData);
   } catch (stateErr) {
     console.error(`[RealtimeDdsobV2:${tag}] State update failed, retrying critical fields:`, stateErr);
     try {
-      localStore.updateState('realtimeDdsobV2State', ticker, {
+      store.updateState('realtimeDdsobV2State', ticker, {
         lastOrderNumbers: orderNumbers,
         lastSellInfo: sellInfo,
         lastOrderDate: orderNumbers.length > 0 ? todayStr : '',

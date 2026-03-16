@@ -288,7 +288,7 @@ export async function runMonthlyMaCrossover(ctx?: AccountContext): Promise<void>
   console.log(`${TAG} 월봉 10이평 돌파 스크리닝 시작`);
 
   try {
-    const kisClient = ctx?.kisClient ?? new KisApiClient(config.kis.paperTrading);
+    const kisClient = ctx?.kisClient ?? new KisApiClient();
     const credentials = ctx
       ? { appKey: ctx.credentials.appKey, appSecret: ctx.credentials.appSecret }
       : { appKey: config.kis.appKey, appSecret: config.kis.appSecret };

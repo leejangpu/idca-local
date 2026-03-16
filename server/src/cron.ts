@@ -31,17 +31,17 @@ export function registerAllCrons(): void {
   // ==================== 국내 시장 (KST) ====================
 
   // 실사오팔 v2 — 매분 (09:00~15:30 KST)
-  cron.schedule('*/1 0-6 * * 1-5', () => {
+  cron.schedule('*/1 9-15 * * 1-5', () => {
     forEachAccount('RealtimeV2KR', ctx => runRealtimeV2KR(ctx));
   }, { timezone: 'Asia/Seoul' });
 
   // 모멘텀 스캘핑 매수 — 매분 (09:00~15:20 KST)
-  cron.schedule('*/1 0-6 * * 1-5', () => {
+  cron.schedule('*/1 9-15 * * 1-5', () => {
     forEachAccount('ScalpBuy', ctx => runMomentumScalpBuyKR(ctx));
   }, { timezone: 'Asia/Seoul' });
 
   // 모멘텀 스캘핑 매도 — 매분 (09:00~15:30 KST)
-  cron.schedule('*/1 0-6 * * 1-5', () => {
+  cron.schedule('*/1 9-15 * * 1-5', () => {
     forEachAccount('ScalpSell', ctx => runMomentumScalpSellKR(ctx));
   }, { timezone: 'Asia/Seoul' });
 
@@ -77,7 +77,7 @@ export function registerAllCrons(): void {
   // ==================== 스윙매매 (KST) ====================
 
   // 스윙 매매 루프 — 5분 주기 (09:00~15:30 KST)
-  cron.schedule('*/5 0-6 * * 1-5', () => {
+  cron.schedule('*/5 9-15 * * 1-5', () => {
     forEachAccount('SwingLoop', ctx => runSwingTradingLoop(ctx));
   }, { timezone: 'Asia/Seoul' });
 

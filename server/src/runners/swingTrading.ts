@@ -10,8 +10,9 @@
 
 import { config } from '../config';
 import * as localStore from '../lib/localStore';
+import { AccountStore } from '../lib/localStore';
 import { KisApiClient, DomesticDailyBarResponse, DomesticIndexPriceResponse, DomesticIndexDailyPriceResponse, DomesticHolidayResponse, getOrRefreshToken, isTokenExpiredError } from '../lib/kisApi';
-import { getCommonConfig, getMarketStrategyConfig, isMarketStrategyActive } from '../lib/configHelper';
+import { getCommonConfig, getMarketStrategyConfig, isMarketStrategyActive, type CommonConfig } from '../lib/configHelper';
 import { AccountContext } from '../lib/accountContext';
 import { getOccupiedTickersExcluding } from '../lib/activeTickerRegistry';
 import { getKoreanTickSize, roundToKoreanTickCeil } from '../lib/marketUtils';
@@ -159,59 +160,64 @@ export interface PendingOrderLog {
 
 // ==================== localStore 래퍼 ====================
 
-function getAllSwingStates<T>(): Map<string, T> {
-  return localStore.getAllStates<T>('swingState');
+function getStore(store?: AccountStore): AccountStore {
+  return store ?? localStore as unknown as AccountStore;
 }
 
-function setSwingState(ticker: string, data: unknown): void {
-  localStore.setState('swingState', ticker, data);
+function getAllSwingStates<T>(store?: AccountStore): Map<string, T> {
+  return getStore(store).getAllStates<T>('swingState');
 }
 
-function updateSwingState(ticker: string, data: Record<string, unknown>): void {
-  localStore.updateState('swingState', ticker, data);
+function setSwingState(ticker: string, data: unknown, store?: AccountStore): void {
+  getStore(store).setState('swingState', ticker, data);
 }
 
-function deleteSwingState(ticker: string): void {
-  localStore.deleteState('swingState', ticker);
+function updateSwingState(ticker: string, data: Record<string, unknown>, store?: AccountStore): void {
+  getStore(store).updateState('swingState', ticker, data);
 }
 
-function addCycleHistory(data: Record<string, unknown>): string {
-  return localStore.addCycleHistory(data);
+function deleteSwingState(ticker: string, store?: AccountStore): void {
+  getStore(store).deleteState('swingState', ticker);
 }
 
-function getPendingOrders(): PendingLimitOrder[] {
-  const all = localStore.getAllStates<PendingLimitOrder>('swingPendingOrders');
+function addSwingCycleHistory(data: Record<string, unknown>, store?: AccountStore): string {
+  return getStore(store).addCycleHistory(data);
+}
+
+function getPendingOrders(store?: AccountStore): PendingLimitOrder[] {
+  const all = getStore(store).getAllStates<PendingLimitOrder>('swingPendingOrders');
   return Array.from(all.values());
 }
 
-function setPendingOrders(orders: PendingLimitOrder[]): void {
+function setPendingOrders(orders: PendingLimitOrder[], store?: AccountStore): void {
   // Clear existing
-  clearPendingOrders();
+  clearPendingOrders(store);
   // Write each order as a separate state file
   for (let i = 0; i < orders.length; i++) {
     const key = `${orders[i].ticker}_${orders[i].signalDate}`;
-    localStore.setState('swingPendingOrders', key, orders[i]);
+    getStore(store).setState('swingPendingOrders', key, orders[i]);
   }
 }
 
-function clearPendingOrders(): void {
-  const existing = localStore.getAllStates<PendingLimitOrder>('swingPendingOrders');
+function clearPendingOrders(store?: AccountStore): void {
+  const s = getStore(store);
+  const existing = s.getAllStates<PendingLimitOrder>('swingPendingOrders');
   for (const key of existing.keys()) {
-    localStore.deleteState('swingPendingOrders', key);
+    s.deleteState('swingPendingOrders', key);
   }
 }
 
-function appendShadowLog(date: string, log: ShadowFillLog): void {
-  localStore.appendLog<ShadowFillLog>('swingShadowLogs', date, log);
+function appendShadowLog(date: string, log: ShadowFillLog, store?: AccountStore): void {
+  getStore(store).appendLog<ShadowFillLog>('swingShadowLogs', date, log);
 }
 
-function appendScanLog(log: UniverseScanLog): void {
-  localStore.appendLog<UniverseScanLog>('swingScanLogs', log.date, log);
+function appendScanLog(log: UniverseScanLog, store?: AccountStore): void {
+  getStore(store).appendLog<UniverseScanLog>('swingScanLogs', log.date, log);
 }
 
-function appendShadowTradeLog(log: SwingShadowTradeLog): void {
+function appendShadowTradeLog(log: SwingShadowTradeLog, store?: AccountStore): void {
   const dateKey = getTodayKST();
-  localStore.appendLog<SwingShadowTradeLog>('swingShadowTrades', dateKey, log);
+  getStore(store).appendLog<SwingShadowTradeLog>('swingShadowTrades', dateKey, log);
 }
 
 // ==================== 캐시 ====================
@@ -448,8 +454,12 @@ export async function runSwingTradingLoop(ctx?: AccountContext): Promise<number>
  * 계좌별 스윙매매 처리
  */
 async function processSwingAccount(ctx?: AccountContext): Promise<number> {
+  const store = ctx?.store;
+
   // 1. CommonConfig 확인 — swingEnabled 체크
-  const commonConfig = getCommonConfig();
+  const commonConfig = ctx
+    ? ctx.store.getTradingConfig<CommonConfig>()
+    : getCommonConfig();
   if (!commonConfig || !isMarketStrategyActive(commonConfig, 'domestic', 'swing')) {
     return 0;
   }
@@ -483,7 +493,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
   const marketContext = await fetchMarketContext(kisClient, credentials.appKey, credentials.appSecret, accessToken) || undefined;
 
   // 4. 로컬 파일에서 현재 상태 전체 조회
-  const stateMap = getAllSwingStates<SwingState>();
+  const stateMap = getAllSwingStates<SwingState>(store);
 
   // 5. 보유 종목 수 계산 (holding/trailing)
   const holdingCount = Array.from(stateMap.values())
@@ -518,7 +528,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
     if (!state) {
       const cycleNumber = 1;
       state = createInitialSwingState(tickerConfig, swingConfig, cycleNumber);
-      setSwingState(ticker, state);
+      setSwingState(ticker, state, store);
       console.log(`[Swing] ${ticker} (${tickerConfig.stockName}) 감시 시작`);
     }
     if (state.status === 'completed') continue;
@@ -536,7 +546,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
     try {
       await processSwingTicker(
         kisClient, credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
-        accountId, tickerConfig, state, swingConfig, holdingCount, marketContext, shadowMode,
+        accountId, tickerConfig, state, swingConfig, holdingCount, marketContext, shadowMode, store,
       );
       processed++;
     } catch (err) {
@@ -670,7 +680,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
               rsi14: indicators.rsi14, atr14: indicators.atr14,
               macdHist: indicators.macdHist,
             },
-          });
+          }, store);
           todayEntries++;
         } else {
           try {
@@ -751,7 +761,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
       console.log(`[Swing] ${ticker} 상태 전이: ${state.status} → ${transition.newStatus} (T${entryResult.trendScore}/P${entryResult.pullbackScore}/S${entryResult.supportScore}/G${entryResult.triggerScore}=${entryResult.readinessScore}, ${entryResult.pullbackState})`);
     }
 
-    updateSwingState(ticker, update as Record<string, unknown>);
+    updateSwingState(ticker, update as Record<string, unknown>, store);
   }
 
   return processed;
@@ -776,6 +786,7 @@ async function processSwingTicker(
   holdingCount: number,
   marketContext?: MarketContext,
   shadowMode: boolean = false,
+  store?: AccountStore,
 ): Promise<void> {
   let accessToken = initialAccessToken;
   const { ticker, stockName } = tickerConfig;
@@ -874,8 +885,8 @@ async function processSwingTicker(
               rsi14: indicators.rsi14, atr14: indicators.atr14,
               macdHist: indicators.macdHist,
             },
-          });
-          updateSwingState(ticker, update as Record<string, unknown>);
+          }, store);
+          updateSwingState(ticker, update as Record<string, unknown>, store);
           return;
         }
 
@@ -917,7 +928,7 @@ async function processSwingTicker(
               const profit = sellAmount - state.totalInvested;
               const profitRate = state.totalInvested > 0 ? (profit / state.totalInvested * 100).toFixed(2) : '0';
 
-              addCycleHistory({
+              addSwingCycleHistory({
                 strategy: 'swing',
                 market: 'domestic',
                 ticker,
@@ -938,9 +949,9 @@ async function processSwingTicker(
                 highestPrice: trailing.highestPrice,
                 configSnapshot: state.config,
                 startedAt: state.entryDate,
-              });
+              }, store);
 
-              deleteSwingState(ticker);
+              deleteSwingState(ticker, store);
 
               console.log(`[Swing] ${ticker} 매도 완료: ${sellQty}주, 수익 ${profit.toLocaleString()}원 (${profitRate}%)`);
               await sendSwingNotification(
@@ -1017,7 +1028,7 @@ async function processSwingTicker(
                 rsi14: indicators.rsi14, atr14: indicators.atr14,
                 macdHist: indicators.macdHist,
               },
-            });
+            }, store);
           } else {
           const buyPrice = currentPrice + getKoreanTickSize(currentPrice);
           try {
@@ -1075,7 +1086,7 @@ async function processSwingTicker(
   }
 
   // state 업데이트 (로컬 파일)
-  updateSwingState(ticker, update as Record<string, unknown>);
+  updateSwingState(ticker, update as Record<string, unknown>, store);
 }
 
 // ==================== 일봉 갱신 (장 시작 시 1회) ====================
@@ -1291,7 +1302,11 @@ export async function runEodSetupScan(ctx?: AccountContext): Promise<number> {
 }
 
 async function processEodScan(ctx?: AccountContext): Promise<number> {
-  const commonConfig = getCommonConfig();
+  const store = ctx?.store;
+
+  const commonConfig = ctx
+    ? ctx.store.getTradingConfig<CommonConfig>()
+    : getCommonConfig();
   if (!commonConfig?.tradingEnabled || !commonConfig.domestic?.swingEnabled) return 0;
 
   const swingConfig = ctx
@@ -1307,7 +1322,7 @@ async function processEodScan(ctx?: AccountContext): Promise<number> {
   const accountId = ctx?.accountId ?? config.accountId;
   const accessToken = await getOrRefreshToken('', accountId, credentials, kisClient);
 
-  const stateMap = getAllSwingStates<SwingState>();
+  const stateMap = getAllSwingStates<SwingState>(store);
   const holdingTickersSet = new Set<string>();
   let holdingCount = 0;
   for (const [ticker, s] of stateMap) {
@@ -1401,7 +1416,7 @@ async function processEodScan(ctx?: AccountContext): Promise<number> {
         checkInterval: transition.checkInterval,
       };
       if (entryResult.activeSwing) update.activeSwing = entryResult.activeSwing;
-      updateSwingState(ticker, update as Record<string, unknown>);
+      updateSwingState(ticker, update as Record<string, unknown>, store);
 
       universeLog.push({
         ticker, stockName: tickerConfig.stockName, source,
@@ -1473,7 +1488,7 @@ async function processEodScan(ctx?: AccountContext): Promise<number> {
       `(zone=${order.zoneLabel}, rank=${order.rankScore}, rr=${order.rrRatio.toFixed(1)})`);
   }
 
-  setPendingOrders(pendingOrders);
+  setPendingOrders(pendingOrders, store);
   console.log(`[Swing:EOD] pending orders: ${pendingOrders.length}건`);
 
   // 스캔 로그 저장
@@ -1492,7 +1507,7 @@ async function processEodScan(ctx?: AccountContext): Promise<number> {
     universe: universeLog,
     candidates: candidateLog,
     pendingOrders: pendingOrderLog,
-  });
+  }, store);
   console.log(`[Swing:EOD] 스캔 로그 저장 완료 (${universeLog.length}종목 스캔, ${candidateLog.length}건 후보, ${pendingOrders.length}건 pending)`);
 
   return pendingOrders.length;
@@ -1505,7 +1520,8 @@ async function processEodScan(ctx?: AccountContext): Promise<number> {
  * shadow mode: 주문 제출 없이 로그만 기록.
  */
 export async function submitPendingOrders(shadow: boolean = true, ctx?: AccountContext): Promise<number> {
-  const pending = getPendingOrders();
+  const store = ctx?.store;
+  const pending = getPendingOrders(store);
   if (pending.length === 0) return 0;
 
   console.log(`[Swing:AM] ${shadow ? '[SHADOW] ' : ''}pending ${pending.length}건 주문 처리`);
@@ -1561,7 +1577,7 @@ export async function submitPendingOrders(shadow: boolean = true, ctx?: AccountC
     await new Promise(r => setTimeout(r, 300));
   }
 
-  setPendingOrders(pending);
+  setPendingOrders(pending, store);
   return pending.filter(o => o.submitted).length;
 }
 
@@ -1572,7 +1588,8 @@ export async function submitPendingOrders(shadow: boolean = true, ctx?: AccountC
  * shadow mode: 현재가의 low/open으로 가상 체결 판정.
  */
 export async function checkPendingFills(shadow: boolean = true, ctx?: AccountContext): Promise<number> {
-  const pending = getPendingOrders();
+  const store = ctx?.store;
+  const pending = getPendingOrders(store);
   if (pending.length === 0) return 0;
 
   const credentials = ctx
@@ -1615,7 +1632,7 @@ export async function checkPendingFills(shadow: boolean = true, ctx?: AccountCon
           fillPrice,
           fillType,
           closeAtFillDay: currentPrice,
-        });
+        }, store);
 
         // pending에서 제거
         const idx = remaining.indexOf(order);
@@ -1635,7 +1652,7 @@ export async function checkPendingFills(shadow: boolean = true, ctx?: AccountCon
     await new Promise(r => setTimeout(r, 200));
   }
 
-  setPendingOrders(remaining);
+  setPendingOrders(remaining, store);
   return fillCount;
 }
 
@@ -1645,7 +1662,8 @@ export async function checkPendingFills(shadow: boolean = true, ctx?: AccountCon
  * 미체결 pending orders 취소 + 로그.
  */
 export async function cancelUnfilledOrders(shadow: boolean = true, ctx?: AccountContext): Promise<number> {
-  const pending = getPendingOrders();
+  const store = ctx?.store;
+  const pending = getPendingOrders(store);
   if (pending.length === 0) return 0;
 
   const today = getTodayKST();
@@ -1663,7 +1681,7 @@ export async function cancelUnfilledOrders(shadow: boolean = true, ctx?: Account
       fillPrice: 0,
       fillType: 'not_filled',
       closeAtFillDay: 0, // 장마감 종가는 별도 조회 필요
-    });
+    }, store);
 
     if (!shadow && order.submitted && order.orderNo) {
       // 실전: KIS 주문 취소 API 호출
@@ -1674,7 +1692,7 @@ export async function cancelUnfilledOrders(shadow: boolean = true, ctx?: Account
     cancelCount++;
   }
 
-  clearPendingOrders();
+  clearPendingOrders(store);
   console.log(`[Swing:CANCEL] ${cancelCount}건 미체결 취소 완료`);
 
   return cancelCount;

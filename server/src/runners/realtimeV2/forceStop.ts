@@ -51,6 +51,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   strategyId: AccountStrategy = 'realtimeDdsobV2',
   ctx?: AccountContext,
 ): Promise<{ success: boolean; soldQty: number; message: string }> {
+  const store = ctx?.store ?? localStore;
   const tag = market === 'domestic' ? 'KR' : 'US';
   console.log(`[ForceStop:${tag}] ticker=${ticker}`);
 
@@ -59,7 +60,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
 
   // 2. state 조회 (exchangeCode 확인 + 보유수량 계산 겸용)
-  const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
+  const state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
 
   // 해외 거래소 코드: state에 저장된 값 우선, 없으면 ticker 기반 자동 판별
   const fsQuoteExcd = state?.exchangeCode as string | undefined;
@@ -162,7 +163,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   const estimatedPrice = (state.previousPrice as number) || 0;
   const estimatedProfit = ((state.totalRealizedProfit as number) || 0) + (estimatedPrice * totalQty - totalBuyAmount);
 
-  localStore.addCycleHistory({
+  store.addCycleHistory({
     ticker,
     market,
     strategy: strategyId,
@@ -200,7 +201,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   });
 
   // 6. state 삭제
-  localStore.deleteState('realtimeDdsobV2State', ticker);
+  store.deleteState('realtimeDdsobV2State', ticker);
 
   // 7. config에서 종목 제거
   await removeTickerFromConfig(ticker, market, strategyId);

@@ -7,6 +7,7 @@ import { KisApiClient } from './kisApi';
 import { isKRMarketOpen } from './marketUtils';
 import { getUserTelegramChatId, sendTelegramMessage } from './telegram';
 import * as localStore from './localStore';
+import { type AccountStore } from './localStore';
 
 // ========================================
 // 타입 정의
@@ -128,8 +129,8 @@ export async function queryAvailableCash(
 // State CRUD — localStore 기반
 // ========================================
 
-export function getOccupiedTickers(): string[] {
-  const all = localStore.getAllStates<MomentumScalpState>(STATE_COLLECTION);
+export function getOccupiedTickers(store?: AccountStore): string[] {
+  const all = (store ?? localStore).getAllStates<MomentumScalpState>(STATE_COLLECTION);
   const result: string[] = [];
   for (const [, s] of all) {
     if (['active', 'pending_buy', 'pending_sell'].includes(s.status)) {
@@ -142,9 +143,10 @@ export function getOccupiedTickers(): string[] {
 export function createMomentumScalpState(
   ticker: string, stockName: string, allocatedAmount: number,
   pendingOrderNo: string | null,
-  entryConditions?: { entryBoxPos: number | null; boxRangePct: number | null; spreadTicks: number | null; targetTicks: number | null }
+  entryConditions?: { entryBoxPos: number | null; boxRangePct: number | null; spreadTicks: number | null; targetTicks: number | null },
+  store?: AccountStore
 ): void {
-  localStore.setState(STATE_COLLECTION, ticker, {
+  (store ?? localStore).setState(STATE_COLLECTION, ticker, {
     ticker, stockName, market: 'domestic', status: 'pending_buy',
     entryPrice: null, entryQuantity: null, targetPrice: null, stopLossPrice: null,
     allocatedAmount, pendingOrderNo, enteredAt: null, sellOrderNo: null, sellExitReason: null,
@@ -155,36 +157,38 @@ export function createMomentumScalpState(
 
 export function updateMomentumScalpStateToActive(
   ticker: string, entryPrice: number, entryQuantity: number,
-  targetPrice: number | null, stopLossPrice: number | null
+  targetPrice: number | null, stopLossPrice: number | null,
+  store?: AccountStore
 ): void {
-  localStore.updateState(STATE_COLLECTION, ticker, {
+  (store ?? localStore).updateState(STATE_COLLECTION, ticker, {
     status: 'active', entryPrice, entryQuantity, targetPrice, stopLossPrice,
     pendingOrderNo: null, enteredAt: new Date().toISOString(),
   });
 }
 
-export function deleteMomentumScalpState(ticker: string): void {
-  localStore.deleteState(STATE_COLLECTION, ticker);
+export function deleteMomentumScalpState(ticker: string, store?: AccountStore): void {
+  (store ?? localStore).deleteState(STATE_COLLECTION, ticker);
 }
 
 export function updateMomentumScalpStateToPendingSell(
   ticker: string, sellOrderNo: string,
   sellExitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction',
-  bestBidAtExit?: number | null
+  bestBidAtExit?: number | null,
+  store?: AccountStore
 ): void {
-  localStore.updateState(STATE_COLLECTION, ticker, {
+  (store ?? localStore).updateState(STATE_COLLECTION, ticker, {
     status: 'pending_sell', sellOrderNo, sellExitReason, bestBidAtExit: bestBidAtExit ?? null,
   });
 }
 
-export function revertMomentumScalpStateToActive(ticker: string): void {
-  localStore.updateState(STATE_COLLECTION, ticker, {
+export function revertMomentumScalpStateToActive(ticker: string, store?: AccountStore): void {
+  (store ?? localStore).updateState(STATE_COLLECTION, ticker, {
     status: 'active', sellOrderNo: null, sellExitReason: null,
   });
 }
 
-export function getMomentumScalpStateByTicker(ticker: string): MomentumScalpState | null {
-  return localStore.getState<MomentumScalpState>(STATE_COLLECTION, ticker);
+export function getMomentumScalpStateByTicker(ticker: string, store?: AccountStore): MomentumScalpState | null {
+  return (store ?? localStore).getState<MomentumScalpState>(STATE_COLLECTION, ticker);
 }
 
 // ========================================
@@ -193,9 +197,10 @@ export function getMomentumScalpStateByTicker(ticker: string): MomentumScalpStat
 
 export async function processSlotRefill(
   config: MomentumScalpConfig, kisClient: KisApiClient,
-  appKey: string, appSecret: string, accessToken: string, accountNo: string
+  appKey: string, appSecret: string, accessToken: string, accountNo: string,
+  store?: AccountStore
 ): Promise<SlotRefillResult> {
-  const occupiedTickers = getOccupiedTickers();
+  const occupiedTickers = getOccupiedTickers(store);
 
   if (occupiedTickers.length >= config.slotCount) {
     return { fillableSlotCount: 0, amountPerSlot: 0, occupiedTickers, skippedReason: null };

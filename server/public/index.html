@@ -826,7 +826,7 @@
           ${pctRow('손절', '음수 (예: -5%)', ac.stopLossPercent != null ? ac.stopLossPercent / 100 : undefined, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossPercent',num(this.value))`)}
           ${toggleRow('소진 손절', '분할 소진 시 손절', ac.exhaustionStopLoss, `onAutoField('${market}','${strategy}','${configKey}','exhaustionStopLoss',this.checked)`)}
           ${ac.stopLossMultiplier !== undefined ? numberRow('손절 배수', '', ac.stopLossMultiplier, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossMultiplier',this.value)`, 'x') : ''}
-          ${ac.minDropPercent !== undefined ? numberRow('최소 하락', '', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','${configKey}','minDropPercent',this.value)`, '%') : ''}
+          ${ac.minDropPercent !== undefined ? pctRow('최소 하락', '평단 대비 최소 낙폭', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','${configKey}','minDropPercent',fromPct(this.value))`) : ''}
           ${ac.peakCheckCandles !== undefined ? numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','peakCheckCandles',this.value)`, '캔들') : ''}
           ${ac.ascendingSplit !== undefined ? toggleRow('상승 분할', '상승 시 분할 매수', ac.ascendingSplit, `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit',this.checked)`) : ''}
           ${ac.spreadFilterEnabled !== undefined ? toggleRow('스프레드 필터', '', ac.spreadFilterEnabled, `onAutoField('${market}','${strategy}','${configKey}','spreadFilterEnabled',this.checked)`) : ''}
@@ -886,7 +886,7 @@
         <div class="card">
           <div class="card-header">손절 / 기타</div>
           ${numberRow('손절', '', ac.stopLossPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','stopLossPercent',this.value)`, '%')}
-          ${numberRow('최소 하락', '', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropPercent',this.value)`, '%')}
+          ${pctRow('최소 하락', '평단 대비 최소 낙폭', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropPercent',fromPct(this.value))`)}
           ${numberRow('최소 하락 틱', '', ac.minDropTicks, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropTicks',this.value)`, '틱')}
           ${numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','peakCheckCandles',this.value)`, '캔들')}
           ${toggleRow('상승 분할', '', ac.ascendingSplit, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ascendingSplit',this.checked)`)}

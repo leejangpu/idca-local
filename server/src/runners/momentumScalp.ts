@@ -198,7 +198,8 @@ async function handlePendingBuy(
   accessToken: string,
   accountNo: string,
   todayStr: string,
-  chatId: string | null
+  chatId: string | null,
+  ctx?: AccountContext
 ): Promise<string> {
   const { ticker, stockName, pendingOrderNo } = state;
 
@@ -227,7 +228,8 @@ async function handlePendingBuy(
 
     updateMomentumScalpStateToActive(
       ticker,
-      entryPrice, quantity, targetPrice, stopLossPrice
+      entryPrice, quantity, targetPrice, stopLossPrice,
+      ctx?.store
     );
 
     console.log(`[QuickScalp] ${ticker} filled: ${quantity}주 @ ${entryPrice}원 → 목표 ${targetPrice} / 손절 ${stopLossPrice}`);
@@ -263,7 +265,7 @@ async function handlePendingBuy(
         await new Promise(resolve => setTimeout(resolve, 300));
       }
 
-      deleteMomentumScalpState(ticker);
+      deleteMomentumScalpState(ticker, ctx?.store);
       console.log(`[QuickScalp] ${ticker} pending_buy cancelled and state deleted`);
     }
   }
@@ -291,7 +293,8 @@ async function handleNewBuy(
   // 빈 슬롯 + 배분 금액 확인
   const refill = await processSlotRefill(
     scalpConfig,
-    kisClient, appKey, appSecret, accessToken, accountNo
+    kisClient, appKey, appSecret, accessToken, accountNo,
+    store
   );
 
   if (refill.fillableSlotCount <= 0) {
@@ -381,6 +384,15 @@ async function handleNewBuy(
     boxEntryFailReasons: {} as Record<string, number>,
   };
 
+  // 종목별 상세 평가 기록
+  const evalDetails: Array<{
+    ticker: string; name: string; price: number;
+    stage: string; pass: boolean; reason?: string;
+    askPrice?: number; bidPrice?: number;
+    spreadTicks?: number; targetTicks?: number;
+    boxPos?: number; boxHigh?: number; boxLow?: number;
+  }> = [];
+
   for (const target of evalTargets) {
     if (filledCount >= refill.fillableSlotCount) break;
 
@@ -397,6 +409,7 @@ async function handleNewBuy(
 
       if (askPrice <= 0 || bidPrice <= 0 || currentPrice <= 0) {
         scanStats.invalidPriceCount++;
+        evalDetails.push({ ticker: target.ticker, name: target.name, price: currentPrice, stage: 'price', pass: false, reason: '가격 0' });
         continue;
       }
 
@@ -412,6 +425,7 @@ async function handleNewBuy(
       if (!filterResult.pass) {
         scanStats.codeFilterFailCount++;
         scanStats.codeFilterFailReasons[filterResult.reason] = (scanStats.codeFilterFailReasons[filterResult.reason] || 0) + 1;
+        evalDetails.push({ ticker: target.ticker, name: target.name, price: currentPrice, stage: 'codeFilter', pass: false, reason: filterResult.reason, askPrice, bidPrice, spreadTicks: filterResult.spreadTicks, targetTicks: filterResult.targetTicks });
         console.log(`❌ [QuickScalp] ${target.name}(${target.ticker}) — 코드필터: ${filterResult.reason}`);
         continue;
       }
@@ -429,6 +443,7 @@ async function handleNewBuy(
       if (!boxResult.shouldEnter) {
         scanStats.boxEntryFailCount++;
         scanStats.boxEntryFailReasons[boxResult.reason] = (scanStats.boxEntryFailReasons[boxResult.reason] || 0) + 1;
+        evalDetails.push({ ticker: target.ticker, name: target.name, price: currentPrice, stage: 'boxEntry', pass: false, reason: boxResult.reason, askPrice, bidPrice, spreadTicks: filterResult.spreadTicks, targetTicks: filterResult.targetTicks, boxPos: boxResult.currentPosition, boxHigh: boxResult.boxHigh, boxLow: boxResult.boxLow });
         console.log(`❌ [QuickScalp] ${target.name}(${target.ticker}) — 박스진입: ${boxResult.reason}`);
         continue;
       }
@@ -451,17 +466,19 @@ async function handleNewBuy(
         targetTicks: filterResult.targetTicks,
       };
 
+      evalDetails.push({ ticker: target.ticker, name: target.name, price: currentPrice, stage: 'entry', pass: true, askPrice, bidPrice, spreadTicks: filterResult.spreadTicks, targetTicks: filterResult.targetTicks, boxPos: boxResult.currentPosition, boxHigh: boxResult.boxHigh, boxLow: boxResult.boxLow });
+
       if (scalpConfig.shadowMode) {
         // ── 쉐도우 모드: 주문 없이 즉시 active (가상 체결 bid+1틱) ──
         const { targetPrice: tp, stopLossPrice: sl } = calculateQuickScalpTarget(buyPrice);
 
         createMomentumScalpState(
           target.ticker, target.name,
-          refill.amountPerSlot, null, entryConditions
+          refill.amountPerSlot, null, entryConditions, store
         );
         updateMomentumScalpStateToActive(
           target.ticker,
-          buyPrice, quantity, tp, sl
+          buyPrice, quantity, tp, sl, store
         );
 
         scanStats.entrySignalCount++;
@@ -507,7 +524,7 @@ async function handleNewBuy(
         if (orderResult.output?.ODNO) {
           createMomentumScalpState(
             target.ticker, target.name,
-            refill.amountPerSlot, orderResult.output.ODNO, entryConditions
+            refill.amountPerSlot, orderResult.output.ODNO, entryConditions, store
           );
 
           scanStats.entrySignalCount++;
@@ -537,6 +554,7 @@ async function handleNewBuy(
   try {
     store.appendLog('scalpScanLogs', todayStr, {
       ...scanStats,
+      evalDetails,
       currentMinute,
       shadowMode: scalpConfig.shadowMode || false,
       createdAt: new Date().toISOString(),
@@ -835,7 +853,7 @@ async function processSellAccount(
           createdAt: new Date().toISOString(),
         });
       }
-      deleteMomentumScalpState(state.ticker);
+      deleteMomentumScalpState(state.ticker, store);
       console.log(`[QuickScalp-Sell] ${state.ticker} pending_buy 취소 (장마감)${scalpConfig.shadowMode ? ' [shadow]' : ''}`);
     }
 
@@ -878,7 +896,7 @@ async function processSellAccount(
           currentPriceAtExit: currentPrice,
         }, ctx);
 
-        deleteMomentumScalpState(ticker);
+        deleteMomentumScalpState(ticker, store);
         const profitRate = ((exitPrice - entryPrice) / entryPrice * 100).toFixed(2);
         console.log(`👻 [QuickScalp-Shadow] ${ticker} 장마감 가상 청산: ${profitRate}% exit@${exitPrice.toLocaleString()}`);
       } else {
@@ -901,7 +919,9 @@ async function processSellAccount(
             updateMomentumScalpStateToPendingSell(
               ticker,
               sellResult.output.ODNO,
-              'market_close_auction'
+              'market_close_auction',
+              undefined,
+              store
             );
             console.log(`[QuickScalp-Sell] ${ticker} 종가 단일가 매도 주문: ${sellResult.output.ODNO} → pending_sell`);
 
@@ -970,7 +990,7 @@ async function processSellAccount(
         accessToken = await handlePendingBuy(
           state,
           kisClient, appKey, appSecret, accessToken, accountNo,
-          todayStr, chatId
+          todayStr, chatId, ctx
         );
       } catch (err) {
         if (isTokenExpiredError(err)) {
@@ -1127,7 +1147,7 @@ async function handleSellCheck(
       currentPriceAtExit: currentPrice,
     }, ctx);
 
-    deleteMomentumScalpState(ticker);
+    deleteMomentumScalpState(ticker, ctx?.store);
     console.log(`👻 [QuickScalp-Shadow] ${ticker} 가상 ${exitReason}: ${profitRate}% (${profitAmount.toLocaleString()}원) exit@${exitPrice.toLocaleString()}`);
     return accessToken;
   }
@@ -1152,7 +1172,8 @@ async function handleSellCheck(
           ticker,
           sellResult.output.ODNO,
           exitReason,
-          bidPrice
+          bidPrice,
+          ctx?.store
         );
 
         console.log(`[QuickScalp-Sell] ${ticker} 매도 주문: ${sellResult.output.ODNO} (${exitReason}, 시장가) → pending_sell`);
@@ -1216,14 +1237,14 @@ async function handlePendingSell(
     const updatedDateStr = `${updatedDate.getUTCFullYear()}${String(updatedDate.getUTCMonth() + 1).padStart(2, '0')}${String(updatedDate.getUTCDate()).padStart(2, '0')}`;
     if (updatedDateStr !== todayStr) {
       console.log(`[QuickScalp-Sell] ${ticker} 오버나이트 pending_sell → active 복귀`);
-      revertMomentumScalpStateToActive(ticker);
+      revertMomentumScalpStateToActive(ticker, ctx?.store);
       return accessToken;
     }
   }
 
   if (!sellOrderNo) {
     console.log(`[QuickScalp-Sell] ${ticker} pending_sell but no sellOrderNo, reverting to active`);
-    revertMomentumScalpStateToActive(ticker);
+    revertMomentumScalpStateToActive(ticker, ctx?.store);
     return accessToken;
   }
 
@@ -1262,7 +1283,7 @@ async function handlePendingSell(
       }, ctx);
     }
 
-    deleteMomentumScalpState(ticker);
+    deleteMomentumScalpState(ticker, ctx?.store);
 
     if (chatId && entryPrice && entryQuantity) {
       const profitRate = ((exitPrice - entryPrice) / entryPrice * 100).toFixed(2);
@@ -1328,7 +1349,7 @@ async function handlePendingSell(
     }
     await new Promise(resolve => setTimeout(resolve, 300));
 
-    revertMomentumScalpStateToActive(ticker);
+    revertMomentumScalpStateToActive(ticker, ctx?.store);
     console.log(`[QuickScalp-Sell] ${ticker} active로 복귀`);
   }
 
@@ -1345,13 +1366,13 @@ export async function forceStopMomentumScalp(ticker: string, ctx?: AccountContex
   }
 
   try {
-    const state = getMomentumScalpStateByTicker(ticker);
+    const store = ctx?.store ?? localStore;
+    const state = getMomentumScalpStateByTicker(ticker, store);
     if (!state) {
       return { success: false, message: `${ticker} 보유 종목이 없습니다` };
     }
 
     // 쉐도우 모드 확인
-    const store = ctx?.store ?? localStore;
     const scalpConfig = store.getStrategyConfig<MomentumScalpConfig>('domestic', 'momentumScalp');
     const isShadow = scalpConfig?.shadowMode === true;
 
@@ -1372,7 +1393,7 @@ export async function forceStopMomentumScalp(ticker: string, ctx?: AccountContex
           createdAt: new Date().toISOString(),
         });
       }
-      deleteMomentumScalpState(ticker);
+      deleteMomentumScalpState(ticker, store);
       console.log(`[QuickScalp:ForceStop] [SHADOW] ${ticker} 상태 삭제 (실제 주문 없음)`);
       return { success: true, message: `${ticker} 강제 청산 완료 (쉐도우)` };
     }
@@ -1486,7 +1507,7 @@ export async function forceStopMomentumScalp(ticker: string, ctx?: AccountContex
       }
     }
 
-    deleteMomentumScalpState(ticker);
+    deleteMomentumScalpState(ticker, store);
 
     const chatId = await getUserTelegramChatId(config.userId);
     if (chatId) {

@@ -522,6 +522,7 @@ export async function processAutoSelectStocks(
   options?: { mode?: 'full' | 'refill' },
   ctx?: AccountContext,
 ): Promise<RealtimeDdsobV2TickerConfig[]> {
+  const store = ctx?.store ?? localStore;
   const mode = options?.mode || 'full';
   const { stockCount, splitCount, selectionMode, maxStockPrice, principalMode } = autoConfig;
   const includeETF = autoConfig.includeETF !== false;
@@ -587,7 +588,7 @@ export async function processAutoSelectStocks(
   let activeAutoCashReserved = 0;
   if (mode === 'refill' && existingAutoTickers.length > 0) {
     for (const t of existingAutoTickers) {
-      const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', t.ticker);
+      const state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', t.ticker);
       if (state) {
         const reserved = ((state.principal as number) || 0) - ((state.totalBuyAmount as number) || 0) + ((state.totalSellAmount as number) || 0);
         activeAutoCashReserved += Math.max(0, reserved);
@@ -866,6 +867,7 @@ export async function processAutoSelectStocksUS(
   options?: { mode?: 'full' | 'refill' },
   ctx?: AccountContext,
 ): Promise<RealtimeDdsobV2TickerConfig[]> {
+  const store = ctx?.store ?? localStore;
   const mode = options?.mode || 'full';
   const { stockCount, principalMode } = autoConfigUS;
 
@@ -990,7 +992,7 @@ export async function processAutoSelectStocksUS(
   let activeAutoCashReserved = 0;
   if (mode === 'refill' && existingAutoTickers.length > 0) {
     for (const t of existingAutoTickers) {
-      const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', t.ticker);
+      const state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', t.ticker);
       if (state) {
         const reserved = ((state.principal as number) || 0) - ((state.totalBuyAmount as number) || 0) + ((state.totalSellAmount as number) || 0);
         activeAutoCashReserved += Math.max(0, reserved);
@@ -1109,6 +1111,7 @@ export async function processAutoSelectStocksV2_1US(
   options?: { mode?: 'full' | 'refill' },
   ctx?: AccountContext,
 ): Promise<RealtimeDdsobV2TickerConfig[]> {
+  const store = ctx?.store ?? localStore;
   const mode = options?.mode || 'full';
   const { stockCount, principalMode } = autoConfig;
 
@@ -1224,7 +1227,7 @@ export async function processAutoSelectStocksV2_1US(
   let activeAutoCashReserved = 0;
   if (mode === 'refill' && existingAutoTickers.length > 0) {
     for (const t of existingAutoTickers) {
-      const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', t.ticker);
+      const state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', t.ticker);
       if (state) {
         const reserved = ((state.principal as number) || 0) - ((state.totalBuyAmount as number) || 0) + ((state.totalSellAmount as number) || 0);
         activeAutoCashReserved += Math.max(0, reserved);
@@ -1362,6 +1365,7 @@ export async function processAutoSelectEOD(
   strategyId: AccountStrategy = 'realtimeDdsobV2',
   ctx?: AccountContext,
 ): Promise<void> {
+  const store = ctx?.store ?? localStore;
   const tag = market === 'domestic' ? 'KR' : 'US';
   console.log(`[EOD:${tag}] Processing: ${eodTickers.length} tickers`);
 
@@ -1395,12 +1399,12 @@ export async function processAutoSelectEOD(
 
     try {
       // 1. 상태 조회
-      const state = localStore.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
+      const state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', ticker);
       if (!state) continue;
 
       const buyRecords = (state.buyRecords as Array<{ quantity: number; buyAmount: number }>) || [];
       if (buyRecords.length === 0) {
-        localStore.deleteState('realtimeDdsobV2State', ticker);
+        store.deleteState('realtimeDdsobV2State', ticker);
         continue;
       }
 
@@ -1425,7 +1429,7 @@ export async function processAutoSelectEOD(
 
           console.log(`[EOD:${tag}] ${ticker} EOD sell confirmed: ${filledQty}주 @ $${filledPrice} (ODNO=${state.eodSellOrderNo})`);
 
-          localStore.addCycleHistory({
+          store.addCycleHistory({
             ticker, market, strategy: strategyId,
             stockName: tc.stockName || ticker,
             cycleNumber: (state.cycleNumber as number) || 1,
@@ -1458,7 +1462,7 @@ export async function processAutoSelectEOD(
           });
 
           eodResults.push({ ticker, name: tc.stockName || ticker, soldQty: filledQty, profit: actualProfit, isAutoSelected });
-          localStore.deleteState('realtimeDdsobV2State', ticker);
+          store.deleteState('realtimeDdsobV2State', ticker);
           continue;
         }
 
@@ -1537,7 +1541,7 @@ export async function processAutoSelectEOD(
 
       if (market === 'overseas') {
         // 해외 LIMIT: 체결 확인 전까지 state 유지
-        localStore.updateState('realtimeDdsobV2State', ticker, {
+        store.updateState('realtimeDdsobV2State', ticker, {
           eodSellPending: true,
           eodSellOrderNo: sellResult.output?.ODNO || '',
           eodSellDate: todayET,
@@ -1552,7 +1556,7 @@ export async function processAutoSelectEOD(
         const estimatedSellPrice = (state.previousPrice as number) || 0;
         const estimatedProfit = ((state.totalRealizedProfit as number) || 0) + (estimatedSellPrice * totalQty - totalBuyAmount);
 
-        localStore.addCycleHistory({
+        store.addCycleHistory({
           ticker, market, strategy: strategyId,
           stockName: tc.stockName || ticker,
           cycleNumber: (state.cycleNumber as number) || 1,
@@ -1585,7 +1589,7 @@ export async function processAutoSelectEOD(
         });
 
         eodResults.push({ ticker, name: tc.stockName || ticker, soldQty: totalQty, profit: estimatedProfit, isAutoSelected });
-        localStore.deleteState('realtimeDdsobV2State', ticker);
+        store.deleteState('realtimeDdsobV2State', ticker);
       }
 
     } catch (err) {

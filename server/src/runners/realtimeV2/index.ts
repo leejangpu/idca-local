@@ -12,6 +12,7 @@ import {
   getCommonConfig,
   getMarketStrategyConfig,
   type AccountStrategy,
+  type CommonConfig,
 } from '../../lib/configHelper';
 import {
   getMarketType,
@@ -87,8 +88,11 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
 
   try {
     let processedCount = 0;
+    const store = ctx?.store ?? localStore;
 
-    const commonConfig = getCommonConfig();
+    const commonConfig = ctx
+      ? ctx.store.getTradingConfig<CommonConfig>()
+      : getCommonConfig();
     if (!commonConfig?.tradingEnabled) { return; }
     const isV2Active = isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2');
     const isV2_1Active = isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2_1');
@@ -96,7 +100,7 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
 
     // 전략이 다를 때: 잔여 포지션이 있으면 매도 전용 모드, 없으면 스킵
     if (!isActiveStrategy) {
-      const allStates = localStore.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
+      const allStates = store.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
       let hasActiveOverseas = false;
       for (const [, stateData] of allStates) {
         if (stateData.status === 'active') {
@@ -109,8 +113,8 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
     }
 
     const rdConfig = isV2_1Active
-      ? getMarketStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1')
-      : getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
+      ? (ctx ? ctx.store.getStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1') : getMarketStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1'))
+      : (ctx ? ctx.store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2') : getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2'));
     if (!rdConfig) return;
 
     const tickerConfigs = extractTickerConfigsV2(rdConfig as unknown as Record<string, unknown>);
@@ -121,7 +125,7 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
     const isUSEODTime = currentMinute >= 945;
 
     // ======== 활성 state 조회 + config 매핑 ========
-    const allStatesMap = localStore.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
+    const allStatesMap = store.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
     const configTickerMap = new Map(overseasConfigTickers.map(t => [t.ticker, t]));
 
     // 활성 overseas state 분류: EOD 대상 vs 일반 매매
@@ -208,8 +212,8 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
       try {
         // v2.1: 지표 기반 자동선별 / v2: 기존 거래대금 순위 기반
         const latestRdConfig = isV2_1Active
-          ? getMarketStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1')
-          : getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
+          ? (ctx ? ctx.store.getStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1') : getMarketStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1'))
+          : (ctx ? ctx.store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2') : getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2'));
         if (latestRdConfig) {
           const latestTickers = extractTickerConfigsV2(latestRdConfig as unknown as Record<string, unknown>);
           const currentUSAutoCount = latestTickers.filter(t => t.autoSelected && t.market === 'overseas').length;
@@ -300,14 +304,17 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
 
   try {
     let processedCount = 0;
+    const store = ctx?.store ?? localStore;
 
-    const commonConfig = getCommonConfig();
+    const commonConfig = ctx
+      ? ctx.store.getTradingConfig<CommonConfig>()
+      : getCommonConfig();
     if (!commonConfig?.tradingEnabled) { return; }
     const isActiveStrategy = isMarketStrategyActive(commonConfig, 'domestic', 'realtimeDdsobV2');
 
     // 전략이 다를 때: 잔여 포지션이 있으면 매도 전용 모드, 없으면 스킵
     if (!isActiveStrategy) {
-      const allStates = localStore.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
+      const allStates = store.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
       let hasActiveDomestic = false;
       for (const [ticker, stateData] of allStates) {
         if (stateData.status === 'active') {
@@ -319,7 +326,9 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
       console.log(`[RealtimeDdsobV2:KR] ${userId}/${accountId} — 매도 전용 모드 (잔여 포지션 존재)`);
     }
 
-    const rdConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
+    const rdConfig = ctx
+      ? ctx.store.getStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2')
+      : getMarketStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
     if (!rdConfig) return;
 
     const tickerConfigs = extractTickerConfigsV2(rdConfig as unknown as Record<string, unknown>);
@@ -327,7 +336,7 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
     const isEODTime = currentMinute >= 915;
 
     // ======== 활성 state 조회 + config 매핑 ========
-    const allStatesMap = localStore.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
+    const allStatesMap = store.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
     const configTickerMap = new Map(domesticConfigTickers.map(t => [t.ticker, t]));
 
     // 활성 domestic state 분류: EOD 대상 vs 일반 매매
@@ -420,7 +429,9 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
       if (autoConfig && autoConfig.stockCount > 0) {
         try {
           // config 재조회 (매매 처리 중 사이클 종료로 변경되었을 수 있음)
-          const latestRdConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
+          const latestRdConfig = ctx
+            ? ctx.store.getStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2')
+            : getMarketStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
           if (latestRdConfig) {
             const latestTickers = extractTickerConfigsV2(latestRdConfig as unknown as Record<string, unknown>);
             const currentAutoCount = latestTickers.filter(t => t.autoSelected && t.market === 'domestic').length;
