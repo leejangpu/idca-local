@@ -32,6 +32,7 @@ export interface BoxEntryParams {
   minuteBars: MinuteBar[];  // 최근 10분 1분봉
   currentPrice: number;
   spreadPct?: number;       // 현재 스프레드 (%, 옵션 — 최소 변동성 계산용)
+  targetTicks?: number;     // v2.1: boxRangeTicks >= 2×targetTicks 체크용
 }
 
 export interface BoxEntryResult {
@@ -88,6 +89,11 @@ export function filterQuickScalpCandidate(
     return { pass: false, targetTicks, spreadTicks, reason: `targetTicks 부족 (${targetTicks} < 3)` };
   }
 
+  // v2.1: targetTicks > 6 종목 제외 (고가 저변동주 — 승률 4.2%)
+  if (targetTicks > 6) {
+    return { pass: false, targetTicks, spreadTicks, reason: `targetTicks 초과 (${targetTicks} > 6)` };
+  }
+
   if (spreadTicks > 2) {
     return { pass: false, targetTicks, spreadTicks, reason: `spreadTicks 초과 (${spreadTicks} > 2)` };
   }
@@ -111,7 +117,7 @@ export function filterQuickScalpCandidate(
  * - 직전 봉 대비 uptick ≥ 1틱 (반등 확인)
  */
 export function checkBoxEntry(params: BoxEntryParams): BoxEntryResult {
-  const { minuteBars, currentPrice, spreadPct } = params;
+  const { minuteBars, currentPrice, spreadPct, targetTicks } = params;
 
   const noEntry = (reason: string): BoxEntryResult => ({
     shouldEnter: false, boxHigh: 0, boxLow: 0, currentPosition: 0.5, reason,
@@ -140,6 +146,15 @@ export function checkBoxEntry(params: BoxEntryParams): BoxEntryResult {
 
   if (boxRangePct < minBoxRangePct) {
     return noEntry(`박스 변동성 부족 (${boxRangePct.toFixed(2)}% < ${minBoxRangePct.toFixed(2)}%)`);
+  }
+
+  // v2.1: boxRangeTicks >= 2 × targetTicks (박스가 target 대비 충분히 넓은지)
+  if (targetTicks && targetTicks > 0) {
+    const boxRangeTicks = Math.round(boxRange / tickSize);
+    const minBoxRangeTicks = 2 * targetTicks;
+    if (boxRangeTicks < minBoxRangeTicks) {
+      return noEntry(`박스 틱 범위 부족 (${boxRangeTicks} < 2×${targetTicks}=${minBoxRangeTicks}틱)`);
+    }
   }
 
   const currentPosition = (currentPrice - boxLow) / boxRange; // 0=바닥, 1=천장
@@ -237,4 +252,75 @@ export function checkMomentumScalpExit(
     exitOrderType: null,
     reason: `홀드 (bestBid ${bidPrice}, 목표 ${targetPrice}, 손절 ${stopLossPrice})`,
   };
+}
+
+// ========================================
+// v2.2: Positive Selection Score
+// ========================================
+
+export interface PositiveScoreParams {
+  recentBars: MinuteBar[];       // 최근 1분봉 (최소 3개)
+  entryBoxPos: number;            // 0~1 (박스 내 진입 위치)
+  boxRangePct: number;            // 박스 범위 %
+  targetTicks: number;
+}
+
+export interface PositiveScoreResult {
+  score: number;
+  details: string[];
+  recentMomentumPct: number | null;  // 최근 3분 모멘텀 %
+}
+
+/**
+ * 진입 전 positive selection 점수 (0~4)
+ *
+ * 구분력이 있는 항목만 점수화 (이미 하드 필터인 항목 제외):
+ * - recent 3m momentum > 0 : 최근 3분봉 상승 추세
+ * - entryBoxPos 0.10~0.20 : 박스 하단 sweet spot
+ * - boxRangePct >= 2.0%   : 충분한 변동성
+ * - targetTicks <= 5       : target 도달 가능성 높은 종목
+ *
+ * 하드 게이트는 config.positiveScoreGateEnabled로 별도 ON/OFF.
+ * 기본은 기록만 (로깅용).
+ */
+export function calculatePositiveScore(params: PositiveScoreParams): PositiveScoreResult {
+  const { recentBars, entryBoxPos, boxRangePct, targetTicks } = params;
+
+  let score = 0;
+  const details: string[] = [];
+  let recentMomentumPct: number | null = null;
+
+  // 1) recent 3m momentum > 0
+  if (recentBars.length >= 3) {
+    const closes = recentBars.map(b => b.close);
+    const c3ago = closes[closes.length - 3];
+    const cNow = closes[closes.length - 1];
+    if (c3ago > 0) {
+      recentMomentumPct = ((cNow - c3ago) / c3ago) * 100;
+      if (recentMomentumPct > 0) {
+        score += 1;
+        details.push(`mom=${recentMomentumPct.toFixed(2)}%`);
+      }
+    }
+  }
+
+  // 2) entryBoxPos 0.10~0.20 (sweet spot)
+  if (entryBoxPos >= 0.10 && entryBoxPos <= 0.20) {
+    score += 1;
+    details.push(`boxPos=${entryBoxPos.toFixed(2)}`);
+  }
+
+  // 3) boxRangePct >= 2.0%
+  if (boxRangePct >= 2.0) {
+    score += 1;
+    details.push(`boxRange=${boxRangePct.toFixed(2)}%`);
+  }
+
+  // 4) targetTicks <= 5
+  if (targetTicks <= 5) {
+    score += 1;
+    details.push(`tgtTicks=${targetTicks}`);
+  }
+
+  return { score, details, recentMomentumPct };
 }

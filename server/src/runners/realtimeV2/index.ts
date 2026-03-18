@@ -218,10 +218,20 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
           const latestTickers = extractTickerConfigsV2(latestRdConfig as unknown as Record<string, unknown>);
           const currentUSAutoCount = latestTickers.filter(t => t.autoSelected && t.market === 'overseas').length;
 
+          // state 기반 가드: 활성 overseas state 수도 슬롯 점유로 간주
+          const freshUSStates = store.getAllStates<Record<string, unknown>>(isV2_1Active ? 'realtimeDdsobV2State' : 'realtimeDdsobV2State');
+          let activeUSStateCount = 0;
+          for (const [tk, st] of freshUSStates) {
+            if (st.status === 'active' && (st.market || getMarketType(tk)) === 'overseas') {
+              activeUSStateCount++;
+            }
+          }
+          const usOccupiedCount = Math.max(currentUSAutoCount, activeUSStateCount);
+
           if (isV2_1Active) {
             const autoConfigV2_1 = (latestRdConfig as RealtimeDdsobV2_1Config).autoSelectConfigUS;
             if (autoConfigV2_1 && autoConfigV2_1.stockCount > 0) {
-              const emptySlots = autoConfigV2_1.stockCount - currentUSAutoCount;
+              const emptySlots = autoConfigV2_1.stockCount - usOccupiedCount;
               if (emptySlots > 0) {
                 console.log(`[RealtimeDdsobV2.1:US] Empty slots detected: ${emptySlots}`);
                 const newTickers = await processAutoSelectStocksV2_1US(autoConfigV2_1, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
@@ -239,7 +249,7 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
           } else {
             const autoConfigUS = (latestRdConfig as RealtimeDdsobV2Config).autoSelectConfigUS as unknown as AutoSelectConfigUS;
             if (autoConfigUS && autoConfigUS.stockCount > 0) {
-              const emptySlots = autoConfigUS.stockCount - currentUSAutoCount;
+              const emptySlots = autoConfigUS.stockCount - usOccupiedCount;
               if (emptySlots > 0) {
                 console.log(`[RealtimeDdsobV2:US] Empty slots detected: ${emptySlots} (target=${autoConfigUS.stockCount}, current=${currentUSAutoCount})`);
                 const newTickers = await processAutoSelectStocksUS(autoConfigUS, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
@@ -435,10 +445,20 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
           if (latestRdConfig) {
             const latestTickers = extractTickerConfigsV2(latestRdConfig as unknown as Record<string, unknown>);
             const currentAutoCount = latestTickers.filter(t => t.autoSelected && t.market === 'domestic').length;
-            const emptySlots = autoConfig.stockCount - currentAutoCount;
+
+            // state 기반 가드: 활성 domestic state 수도 슬롯 점유로 간주
+            const freshStates = store.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
+            let activeDomesticStateCount = 0;
+            for (const [tk, st] of freshStates) {
+              if (st.status === 'active' && (st.market || getMarketType(tk)) === 'domestic') {
+                activeDomesticStateCount++;
+              }
+            }
+            const occupiedCount = Math.max(currentAutoCount, activeDomesticStateCount);
+            const emptySlots = autoConfig.stockCount - occupiedCount;
 
             if (emptySlots > 0) {
-              console.log(`[RealtimeDdsobV2:KR] Empty slots detected: ${emptySlots} (target=${autoConfig.stockCount}, current=${currentAutoCount})`);
+              console.log(`[RealtimeDdsobV2:KR] Empty slots detected: ${emptySlots} (target=${autoConfig.stockCount}, configAuto=${currentAutoCount}, activeStates=${activeDomesticStateCount})`);
               const newTickers = await processAutoSelectStocks(autoConfig, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
 
               // refill로 추가된 종목 즉시 매매 시작 (다음 틱까지 기다리지 않음)

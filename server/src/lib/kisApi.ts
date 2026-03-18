@@ -513,12 +513,15 @@ export class KisApiClient {
       msg1: 'No results',
     };
 
-    console.log(`[Balance] Merged result: output1_length=${mergedOutput1.length}, tickers=${mergedOutput1.map(o => o.ovrs_pdno).join(',')}`);
+    // output2 (계좌 요약: 총자산, 총손익 등) — 첫 번째 유효한 결과에서 가져옴
+    const mergedOutput2 = results.find(r => r?.output2 && Array.isArray(r.output2) && r.output2.length > 0)?.output2 || [];
+
+    console.log(`[Balance] Merged result: output1_length=${mergedOutput1.length}, tickers=${mergedOutput1.map(o => o.ovrs_pdno).join(',')}, output2_length=${mergedOutput2.length}`);
 
     return {
       ...firstValidResult,
       output1: mergedOutput1,
-      output2: [], // output2는 요약 정보로 사용되지 않음
+      output2: mergedOutput2,
     };
   }
 

@@ -722,10 +722,7 @@
           <div class="card-header">슬롯 설정</div>
           ${numberRow('슬롯 수', '동시 보유 종목 수', d.slotCount, `onStratFieldNum('${market}','momentumScalp','slotCount',this.value)`, '개')}
           ${selectRow('배분 모드', [['equal','균등'],['fixed','고정 금액']], d.allocationMode, `onStratField('${market}','momentumScalp','allocationMode',this.value)`)}
-          ${numberRow('고정 금액', '배분 모드가 "고정"일 때', d.fixedAmount, `onStratFieldNum('${market}','momentumScalp','fixedAmount',this.value)`, '원')}
-          ${numberRow('종목당 금액', '레거시 설정', d.amountPerStock, `onStratFieldNum('${market}','momentumScalp','amountPerStock',this.value)`, '원')}
-          ${numberRow('최소 주문금액', '', d.minOrderAmount, `onStratFieldNum('${market}','momentumScalp','minOrderAmount',this.value)`, '원')}
-          ${numberRow('거래량 상위', '종목 필터링', d.volumeRankTop, `onStratFieldNum('${market}','momentumScalp','volumeRankTop',this.value)`, '종목')}
+          ${numberRow('종목당 금액', '슬롯당 배분 금액', d.amountPerStock, `onStratFieldNum('${market}','momentumScalp','amountPerStock',this.value)`, '원')}
         </div>
         <div class="card">
           <div class="card-header">HTS 조건검색</div>
@@ -918,20 +915,6 @@
           <div class="card-header">투자 한도</div>
           ${numberRow('총 투자금', '스윙 전체 투자 한도', d.globalPrincipal, `onStratFieldNum('${market}','swing','globalPrincipal',this.value)`, '원')}
           ${numberRow('최대 포지션 수', '동시 보유 종목 수', d.maxPositions, `onStratFieldNum('${market}','swing','maxPositions',this.value)`, '종목')}
-        </div>
-        <div class="card">
-          <div class="card-header">익절 / 손절</div>
-          ${pctRow('기본 익절 목표', '', d.defaultProfitPercent, `onStratFieldPct('${market}','swing','defaultProfitPercent',this.value)`)}
-          ${pctRow('기본 손절 라인', '음수', d.defaultStopLossPercent, `onStratFieldPct('${market}','swing','defaultStopLossPercent',this.value)`)}
-        </div>
-        <div class="card">
-          <div class="card-header">트레일링 스톱</div>
-          ${toggleRow('트레일링 스톱', 'ATR 기반 동적 손절선', d.trailingStopEnabled, `onStratField('${market}','swing','trailingStopEnabled',this.checked)`)}
-          ${pctRow('트레일링 비율', '고점 대비 하락 허용', d.trailingStopPercent, `onStratFieldPct('${market}','swing','trailingStopPercent',this.value)`)}
-        </div>
-        <div class="card">
-          <div class="card-header">보유 기간</div>
-          ${numberRow('최대 보유일', '', d.maxHoldingDays, `onStratFieldNum('${market}','swing','maxHoldingDays',this.value)`, '일')}
         </div>
         <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','swing')">저장</button>

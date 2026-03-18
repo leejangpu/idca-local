@@ -14,8 +14,6 @@ import {
 import { AccountContext } from '../../lib/accountContext';
 import {
   type AccountStrategy,
-  getMarketStrategyConfig,
-  setMarketStrategyConfig,
 } from '../../lib/configHelper';
 import {
   sendTelegramMessage,
@@ -683,14 +681,16 @@ export async function applyIndicatorFiltersUS(
 function removeTickerFromConfig(
   ticker: string,
   market: MarketType,
-  strategyId: AccountStrategy = 'realtimeDdsobV2'
+  strategyId: AccountStrategy = 'realtimeDdsobV2',
+  ctx?: AccountContext
 ): void {
-  const strategyConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
+  const store = ctx?.store ?? localStore;
+  const strategyConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
   if (strategyConfig) {
     const allTickers = extractTickerConfigsV2(strategyConfig as unknown as Record<string, unknown>);
     if (allTickers.some(t => t.ticker === ticker)) {
       const remaining = allTickers.filter(t => t.ticker !== ticker);
-      setMarketStrategyConfig(market, strategyId, {
+      store.setStrategyConfig(market, strategyId, {
         ...strategyConfig,
         tickers: remaining,
       });
@@ -774,7 +774,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   }
 
   if (!state) {
-    removeTickerFromConfig(ticker, market, strategyId);
+    removeTickerFromConfig(ticker, market, strategyId, ctx);
     return { success: true, soldQty: 0, message: '보유 없음, 추적종료 완료' };
   }
 
@@ -863,7 +863,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   store.deleteState('realtimeDdsobV2State', ticker);
 
   // 7. config에서 종목 제거
-  removeTickerFromConfig(ticker, market, strategyId);
+  removeTickerFromConfig(ticker, market, strategyId, ctx);
 
   console.log(`[ForceStop:${tag}] Completed: ${ticker} ${soldQty}주 매도, 추적종료`);
   return { success: true, soldQty, message: `${ticker} ${soldQty}주 매도 완료, 추적종료` };
@@ -1251,11 +1251,11 @@ export async function processRealtimeDdsobV2Trading(
         // autoSelected 종목: 사이클 종료 시 config에서 제거
         if (tickerConfig.autoSelected) {
           try {
-            const latestConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
+            const latestConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
             if (latestConfig) {
               const latestTickers = extractTickerConfigsV2(latestConfig as unknown as Record<string, unknown>);
               const remaining = latestTickers.filter(t => !(t.ticker === ticker && t.autoSelected));
-              setMarketStrategyConfig(market, strategyId, {
+              store.setStrategyConfig(market, strategyId, {
                 ...latestConfig,
                 tickers: remaining,
               });
@@ -1269,7 +1269,7 @@ export async function processRealtimeDdsobV2Trading(
 
         // config에서 제거된 종목(orphaned): 사이클 완료 후 새 사이클 시작하지 않음
         {
-          const latestConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
+          const latestConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
           if (latestConfig) {
             const latestTickers = extractTickerConfigsV2(latestConfig as unknown as Record<string, unknown>);
             const stillInConfig = latestTickers.some(t => t.ticker === ticker);
@@ -1413,13 +1413,13 @@ export async function processRealtimeDdsobV2Trading(
       );
       const stockName = infoResp.output1?.hts_kor_isnm;
       if (stockName) {
-        const strategyConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
+        const strategyConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
         const tickers = strategyConfig?.tickers as RealtimeDdsobV2TickerConfig[] | undefined;
         if (tickers) {
           const updatedTickers = tickers.map(t =>
             t.ticker === ticker ? { ...t, stockName } : t
           );
-          setMarketStrategyConfig(market, strategyId, {
+          store.setStrategyConfig(market, strategyId, {
             ...strategyConfig,
             tickers: updatedTickers,
           });
@@ -1497,16 +1497,7 @@ export async function processRealtimeDdsobV2Trading(
     store.setState('realtimeDdsobV2State', ticker, state);
     console.log(`[RealtimeDdsobV2:${tag}] New cycle started: principal=${fp(principal)}, amountPerRound=${fp(amountPerRound)}, previousPrice=${fp(currentPrice)}`);
 
-    if (chatId) {
-      await sendTelegramMessage(chatId,
-        `📋 <b>새 사이클 시작</b> [${tickerConfig.stockName || ticker}]\n\n` +
-        `투자원금: ${fp(principal)}\n` +
-        `1회분: ${fp(amountPerRound)}\n` +
-        `기준가: ${fp(currentPrice)}\n` +
-        `첫 매수 즉시 진행...`,
-        'HTML'
-      );
-    }
+    // 새 사이클 시작 알림 생략 (장마감 결과로 통합)
 
     // 새 사이클 생성 후 바로 아래 계산·매수 단계로 진행
   }
@@ -1605,8 +1596,10 @@ export async function processRealtimeDdsobV2Trading(
   }
 
   const equalAmountPerRound = (state.amountPerRound as number) || (state.principal as number) / splitCount;
+  // 점증 분할: 버퍼 적용 가격 기준으로 계산해야 첫 회차에서 1주 보장됨
+  const ascendingBuyPrice = Math.ceil(currentPrice * (1 + bufferPercent));
   const effectiveAmountPerRound = tickerConfig.ascendingSplit
-    ? getAscendingAmountForRound((state.principal as number), splitCount, buyRecords.length, currentPrice)
+    ? getAscendingAmountForRound((state.principal as number), splitCount, buyRecords.length, ascendingBuyPrice)
     : equalAmountPerRound;
 
   const calcResult = calculateRealtimeDdsobV2({
@@ -1692,11 +1685,11 @@ export async function processRealtimeDdsobV2Trading(
       } else {
         store.deleteState('realtimeDdsobV2State', ticker);
         if (tickerConfig.autoSelected) {
-          const latestConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
+          const latestConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
           if (latestConfig) {
             const latestTickers = extractTickerConfigsV2(latestConfig as unknown as Record<string, unknown>);
             const remaining = latestTickers.filter(t => !(t.ticker === ticker && t.autoSelected));
-            setMarketStrategyConfig(market, strategyId, {
+            store.setStrategyConfig(market, strategyId, {
               ...latestConfig,
               tickers: remaining,
             });
@@ -1721,11 +1714,11 @@ export async function processRealtimeDdsobV2Trading(
       if (newCandlesBeforeFirstBuy >= FIRST_BUY_TIMEOUT_CANDLES) {
         console.log(`[RealtimeDdsobV2:${tag}] First buy timeout: ${ticker} no buy in ${newCandlesBeforeFirstBuy} candles (${newCandlesBeforeFirstBuy * intervalMinutes}min) → removing`);
         store.deleteState('realtimeDdsobV2State', ticker);
-        const latestConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
+        const latestConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
         if (latestConfig) {
           const latestTickers = extractTickerConfigsV2(latestConfig as unknown as Record<string, unknown>);
           const remaining = latestTickers.filter(t => !(t.ticker === ticker && t.autoSelected));
-          setMarketStrategyConfig(market, strategyId, {
+          store.setStrategyConfig(market, strategyId, {
             ...latestConfig,
             tickers: remaining,
           });
@@ -1994,11 +1987,11 @@ export async function processRealtimeDdsobV2Trading(
     if (newCandlesBeforeFirstBuy >= FIRST_BUY_TIMEOUT_CANDLES) {
       console.log(`[RealtimeDdsobV2:${tag}] First buy timeout: ${ticker} no buy in ${newCandlesBeforeFirstBuy} candles (${newCandlesBeforeFirstBuy * intervalMinutes}min) → removing`);
       store.deleteState('realtimeDdsobV2State', ticker);
-      const latestConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
+      const latestConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
       if (latestConfig) {
         const latestTickers = extractTickerConfigsV2(latestConfig as unknown as Record<string, unknown>);
         const remaining = latestTickers.filter(t => !(t.ticker === ticker && t.autoSelected));
-        setMarketStrategyConfig(market, strategyId, {
+        store.setStrategyConfig(market, strategyId, {
           ...latestConfig,
           tickers: remaining,
         });

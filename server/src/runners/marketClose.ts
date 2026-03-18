@@ -245,6 +245,8 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
         holdingsArray = Array.isArray(balanceData.output1) ? balanceData.output1 : [];
       }
 
+      console.log(`[MarketClose] Balance result: rt_cd=${balanceData.rt_cd}, holdings=${holdingsArray.length}, output2=${Array.isArray(balanceData.output2) ? balanceData.output2.length : 'N/A'}`);
+
       // --- 오늘 체결 내역 조회 ---
       let todayExecutions: Array<{
         ticker: string;
@@ -255,6 +257,7 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
       }> = [];
       const today = new Date();
       const todayStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+      console.log(`[MarketClose] Query date: ${todayStr} (UTC: ${today.toISOString()})`);
 
       try {
         if (market === 'overseas') {
@@ -266,6 +269,8 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
             '00',   // 매도매수 전체
             '01'    // 체결건만
           );
+
+          console.log(`[MarketClose] Exec history: rt_cd=${execHistory.rt_cd}, msg=${execHistory.msg1}, output_length=${execHistory.output?.length ?? 0}`);
 
           if (execHistory.output && execHistory.output.length > 0) {
             for (const exec of execHistory.output) {
@@ -844,12 +849,8 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
           try {
             // 오늘 완료된 사이클 조회 (market 필터)
             const todayDateStr = new Date().toISOString().slice(0, 10);
-            const allCycleHistory = store.getAllCycleHistory<any>();
-            const todayCompletedCycles = allCycleHistory.filter(c =>
-              c.strategy === strategyId &&
-              c.market === market &&
-              c.completedAt && c.completedAt.startsWith(todayDateStr)
-            );
+            const todayCycles = store.getCycleHistory<any>(todayDateStr, strategyId);
+            const todayCompletedCycles = todayCycles.filter((c: any) => c.market === market);
 
             let totalProfit = 0;
             let totalPrincipal = 0;
@@ -926,15 +927,18 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
             const buyableData = await kisClient.getBuyableAmount(
               credentials.appKey, credentials.appSecret, accessToken,
               credentials.accountNo, 'TQQQ', 1, 'NASD'
-            ).catch(() => null);
+            ).catch((err) => { console.error(`[MarketClose] getBuyableAmount error:`, err); return null; });
+
+            console.log(`[MarketClose] getBuyableAmount: rt_cd=${buyableData?.rt_cd}, ovrs_ord_psbl_amt=${buyableData?.output?.ovrs_ord_psbl_amt}, frcr_ord_psbl_amt1=${buyableData?.output?.frcr_ord_psbl_amt1}`);
 
             if (buyableData?.rt_cd === '0' && buyableData.output) {
               cashBalance = parseFloat(buyableData.output.ovrs_ord_psbl_amt || buyableData.output.frcr_ord_psbl_amt1 || '0');
             }
 
-            // fallback: balanceData에서 산출
+            // fallback: balanceData.output2에서 산출
             if (cashBalance <= 0) {
               const balOutput2 = Array.isArray(balanceData.output2) ? balanceData.output2[0] : null;
+              console.log(`[MarketClose] Cash fallback: output2[0]=${JSON.stringify(balOutput2)}, holdingsCount=${holdingsArray.length}`);
               const totalAsset = parseFloat(balOutput2?.tot_asst_amt || '0');
               const totalEvalAmount = holdingsArray.reduce(
                 (sum: number, h: { ovrs_stck_evlu_amt?: string }) => sum + parseFloat(h.ovrs_stck_evlu_amt || '0'), 0
@@ -987,6 +991,60 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
         }
       }
       // --- 예수금 잔액 체크 끝 ---
+
+      // --- 당일 수수료/세금 조회 → 사이클 히스토리에 기록 ---
+      try {
+        const todayDateStr = today.toISOString().slice(0, 10);
+        let totalFee = 0;
+        let totalTax = 0;
+
+        if (market === 'domestic') {
+          await new Promise(resolve => setTimeout(resolve, 300));
+          const pnlResp = await kisClient.getDomesticDailyPnl(
+            credentials.appKey, credentials.appSecret, accessToken,
+            credentials.accountNo, todayStr, todayStr
+          );
+          if (pnlResp?.rt_cd === '0' && pnlResp.output2) {
+            totalFee = parseFloat(pnlResp.output2.tot_fee || '0');
+            totalTax = parseFloat(pnlResp.output2.tot_tltx || '0');
+          }
+        }
+        // 해외는 PnL API에 수수료/세금 필드 없음 — 추후 확장
+
+        if (totalFee > 0 || totalTax > 0) {
+          // 당일 전 전략 사이클 히스토리에서 매도금액 비례로 수수료/세금 배분
+          const todayCycles = store.getCycleHistory<any>(todayDateStr);
+          const totalSellAmt = todayCycles.reduce((sum: number, c: any) =>
+            sum + ((c.totalSellAmount as number) || 0), 0);
+
+          if (totalSellAmt > 0 && todayCycles.length > 0) {
+            for (const cycle of todayCycles) {
+              const sellAmt = (cycle.totalSellAmount as number) || 0;
+              const ratio = sellAmt / totalSellAmt;
+              cycle.fee = Math.round(totalFee * ratio);
+              cycle.tax = Math.round(totalTax * ratio);
+              cycle.netProfit = (cycle.totalRealizedProfit || 0) - cycle.fee - cycle.tax;
+            }
+
+            // 전략별로 분류해서 다시 저장
+            const byStrategy = new Map<string, any[]>();
+            for (const cycle of todayCycles) {
+              const s = (cycle.strategy as string) || 'unknown';
+              if (!byStrategy.has(s)) byStrategy.set(s, []);
+              byStrategy.get(s)!.push(cycle);
+            }
+            for (const [s, cycles] of byStrategy) {
+              store.saveCycleHistory(todayDateStr, s, cycles);
+            }
+
+            console.log(`[MarketClose] Fee/tax applied: fee=${totalFee}, tax=${totalTax}, cycles=${todayCycles.length}`);
+          }
+        }
+      } catch (pnlErr) {
+        console.warn(`[MarketClose] Fee/tax query failed (non-critical):`, pnlErr);
+      }
+      // --- 수수료/세금 기록 끝 ---
+
     } catch (syncError) {
       console.error(`Cycle sync error:`, syncError);
     }
@@ -1048,6 +1106,18 @@ async function processMarketClose(market: MarketType, ctx?: AccountContext) {
             const totalSign = summary.totalProfit >= 0 ? '+' : '';
             const totalEmoji = summary.totalProfit >= 0 ? '📈' : '📉';
             message += `${totalEmoji} 총 실현수익: <b>${totalSign}${fmtAmt(market, summary.totalProfit)}</b> (${totalSign}${summary.profitRate.toFixed(2)}%)\n`;
+
+            // 수수료/세금 반영 순수익
+            const todayDateStr2 = new Date().toISOString().slice(0, 10);
+            const todayCyclesForFee = store.getCycleHistory<any>(todayDateStr2, strategy);
+            const todayFee = todayCyclesForFee.reduce((s: number, c: any) => s + ((c.fee as number) || 0), 0);
+            const todayTax = todayCyclesForFee.reduce((s: number, c: any) => s + ((c.tax as number) || 0), 0);
+            if (todayFee > 0 || todayTax > 0) {
+              const netProfit = summary.totalProfit - todayFee - todayTax;
+              const netSign = netProfit >= 0 ? '+' : '';
+              message += `💰 수수료: ${fmtAmt(market, todayFee)}, 세금: ${fmtAmt(market, todayTax)}\n`;
+              message += `💵 순수익: <b>${netSign}${fmtAmt(market, netProfit)}</b>\n`;
+            }
           }
 
           if (summary.activeCycles.length > 0) {

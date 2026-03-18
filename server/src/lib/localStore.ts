@@ -13,7 +13,7 @@
  *     state/pendingOrders/{orderId}.json          ← 대기 주문
  *     logs/{type}/{YYYYMMDD}.json                 ← 일별 로그
  *     history/balanceHistory/{YYYYMMDD}.json      ← 잔고 히스토리
- *     history/cycleHistory/{id}.json              ← 사이클 히스토리
+ *     history/cycleHistory/{YYYY-MM-DD}.json      ← 날짜별 사이클 히스토리
  *     swing/                                      ← 스윙 데이터 (기존 호환)
  */
 
@@ -92,9 +92,12 @@ const paths = {
   // History
   balanceHistoryFile: (date: string) =>
     path.join(DATA_ROOT, 'history', 'balanceHistory', `${date}.json`),
-  cycleHistoryDir: () => path.join(DATA_ROOT, 'history', 'cycleHistory'),
-  cycleHistoryFile: (id: string) =>
-    path.join(DATA_ROOT, 'history', 'cycleHistory', `${id}.json`),
+  cycleHistoryDir: (strategy?: string) =>
+    strategy
+      ? path.join(DATA_ROOT, 'history', 'cycleHistory', strategy)
+      : path.join(DATA_ROOT, 'history', 'cycleHistory'),
+  cycleHistoryFile: (strategy: string, date: string) =>
+    path.join(DATA_ROOT, 'history', 'cycleHistory', strategy, `${date}.json`),
 
   // Swing (기존 호환)
   swingDir: () => path.join(DATA_ROOT, 'swing'),
@@ -278,25 +281,79 @@ export function setBalanceHistory(date: string, data: unknown): void {
 // ==================== Cycle History ====================
 
 export function addCycleHistory(data: Record<string, unknown>): string {
-  const dir = paths.cycleHistoryDir();
+  const strategy = (data.strategy as string) || 'unknown';
+  const dir = paths.cycleHistoryDir(strategy);
   ensureDir(dir);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const ticker = (data.ticker as string) || 'unknown';
-  const id = `${timestamp}_${ticker}`;
-  writeJson(paths.cycleHistoryFile(id), {
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  const entry = {
     ...data,
-    completedAt: new Date().toISOString(),
-  });
-  return id;
+    completedAt: now.toISOString(),
+  };
+  const filePath = paths.cycleHistoryFile(strategy, date);
+  const existing = readJson<Record<string, unknown>[]>(filePath) || [];
+  existing.push(entry);
+  writeJson(filePath, existing);
+  const ticker = (data.ticker as string) || 'unknown';
+  return `${strategy}/${date}_${ticker}`;
 }
 
-export function getAllCycleHistory<T>(): T[] {
-  const dir = paths.cycleHistoryDir();
-  const files = listJsonFiles(dir).sort();
+export function getCycleHistory<T>(date: string, strategy?: string): T[] {
+  if (strategy) {
+    return readJson<T[]>(paths.cycleHistoryFile(strategy, date)) || [];
+  }
+  // 전략 미지정 시 전체 전략 합산
+  const baseDir = paths.cycleHistoryDir();
+  if (!fs.existsSync(baseDir)) return [];
+  const strategies = fs.readdirSync(baseDir).filter(d =>
+    fs.statSync(path.join(baseDir, d)).isDirectory()
+  );
   const results: T[] = [];
-  for (const file of files) {
-    const data = readJson<T>(path.join(dir, file));
-    if (data) results.push(data);
+  for (const s of strategies) {
+    const arr = readJson<T[]>(paths.cycleHistoryFile(s, date));
+    if (Array.isArray(arr)) results.push(...arr);
+  }
+  return results;
+}
+
+export function saveCycleHistory(date: string, strategy: string, entries: Record<string, unknown>[]): void {
+  const dir = paths.cycleHistoryDir(strategy);
+  ensureDir(dir);
+  writeJson(paths.cycleHistoryFile(strategy, date), entries);
+}
+
+export function getAllCycleHistory<T>(strategy?: string): T[] {
+  if (strategy) {
+    const dir = paths.cycleHistoryDir(strategy);
+    if (!fs.existsSync(dir)) return [];
+    const files = listJsonFiles(dir).sort();
+    const results: T[] = [];
+    for (const file of files) {
+      const arr = readJson<T[]>(path.join(dir, file));
+      if (Array.isArray(arr)) results.push(...arr);
+    }
+    return results;
+  }
+  // 전략 미지정 시 전체
+  const baseDir = paths.cycleHistoryDir();
+  if (!fs.existsSync(baseDir)) return [];
+  const results: T[] = [];
+  const strategies = fs.readdirSync(baseDir).filter(d => {
+    const fullPath = path.join(baseDir, d);
+    return fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory();
+  });
+  for (const s of strategies) {
+    const dir = paths.cycleHistoryDir(s);
+    const files = listJsonFiles(dir).sort();
+    for (const file of files) {
+      const arr = readJson<T[]>(path.join(dir, file));
+      if (Array.isArray(arr)) {
+        results.push(...arr);
+      } else if (arr && typeof arr === 'object') {
+        // 기존 개별 파일 호환
+        results.push(arr as unknown as T);
+      }
+    }
   }
   return results;
 }
@@ -437,7 +494,9 @@ export interface AccountStore {
   getBalanceHistory<T>(date: string): T | null;
   setBalanceHistory(date: string, data: unknown): void;
   addCycleHistory(data: Record<string, unknown>): string;
-  getAllCycleHistory<T>(): T[];
+  getCycleHistory<T>(date: string, strategy?: string): T[];
+  saveCycleHistory(date: string, strategy: string, entries: Record<string, unknown>[]): void;
+  getAllCycleHistory<T>(strategy?: string): T[];
   appendTextLog(prefix: string, message: string): void;
 }
 
@@ -459,9 +518,12 @@ function makeAccountPaths(root: string) {
       path.join(root, 'logs', type, `${date}.json`),
     balanceHistoryFile: (date: string) =>
       path.join(root, 'history', 'balanceHistory', `${date}.json`),
-    cycleHistoryDir: () => path.join(root, 'history', 'cycleHistory'),
-    cycleHistoryFile: (id: string) =>
-      path.join(root, 'history', 'cycleHistory', `${id}.json`),
+    cycleHistoryDir: (strategy?: string) =>
+      strategy
+        ? path.join(root, 'history', 'cycleHistory', strategy)
+        : path.join(root, 'history', 'cycleHistory'),
+    cycleHistoryFile: (strategy: string, date: string) =>
+      path.join(root, 'history', 'cycleHistory', strategy, `${date}.json`),
     textLogDir: () => path.join(root, 'logs', 'text'),
   };
 }
@@ -593,24 +655,73 @@ export function forAccount(accountId: string): AccountStore {
       });
     },
     addCycleHistory(data: Record<string, unknown>): string {
-      const dir = p.cycleHistoryDir();
+      const strategy = (data.strategy as string) || 'unknown';
+      const dir = p.cycleHistoryDir(strategy);
       ensureDir(dir);
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const ticker = (data.ticker as string) || 'unknown';
-      const id = `${timestamp}_${ticker}`;
-      writeJson(p.cycleHistoryFile(id), {
+      const now = new Date();
+      const date = now.toISOString().slice(0, 10);
+      const entry = {
         ...data,
-        completedAt: new Date().toISOString(),
-      });
-      return id;
+        completedAt: now.toISOString(),
+      };
+      const filePath = p.cycleHistoryFile(strategy, date);
+      const existing = readJson<Record<string, unknown>[]>(filePath) || [];
+      existing.push(entry);
+      writeJson(filePath, existing);
+      const ticker = (data.ticker as string) || 'unknown';
+      return `${strategy}/${date}_${ticker}`;
     },
-    getAllCycleHistory<T>(): T[] {
-      const dir = p.cycleHistoryDir();
-      const files = listJsonFiles(dir).sort();
+    getCycleHistory<T>(date: string, strategy?: string): T[] {
+      if (strategy) {
+        return readJson<T[]>(p.cycleHistoryFile(strategy, date)) || [];
+      }
+      const baseDir = p.cycleHistoryDir();
+      if (!fs.existsSync(baseDir)) return [];
+      const strategies = fs.readdirSync(baseDir).filter(d =>
+        fs.statSync(path.join(baseDir, d)).isDirectory()
+      );
       const results: T[] = [];
-      for (const file of files) {
-        const data = readJson<T>(path.join(dir, file));
-        if (data) results.push(data);
+      for (const s of strategies) {
+        const arr = readJson<T[]>(p.cycleHistoryFile(s, date));
+        if (Array.isArray(arr)) results.push(...arr);
+      }
+      return results;
+    },
+    saveCycleHistory(date: string, strategy: string, entries: Record<string, unknown>[]): void {
+      const dir = p.cycleHistoryDir(strategy);
+      ensureDir(dir);
+      writeJson(p.cycleHistoryFile(strategy, date), entries);
+    },
+    getAllCycleHistory<T>(strategy?: string): T[] {
+      if (strategy) {
+        const dir = p.cycleHistoryDir(strategy);
+        if (!fs.existsSync(dir)) return [];
+        const files = listJsonFiles(dir).sort();
+        const results: T[] = [];
+        for (const file of files) {
+          const arr = readJson<T[]>(path.join(dir, file));
+          if (Array.isArray(arr)) results.push(...arr);
+        }
+        return results;
+      }
+      const baseDir = p.cycleHistoryDir();
+      if (!fs.existsSync(baseDir)) return [];
+      const results: T[] = [];
+      const strategies = fs.readdirSync(baseDir).filter(d => {
+        const fullPath = path.join(baseDir, d);
+        return fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory();
+      });
+      for (const s of strategies) {
+        const dir = p.cycleHistoryDir(s);
+        const files = listJsonFiles(dir).sort();
+        for (const file of files) {
+          const arr = readJson<T[]>(path.join(dir, file));
+          if (Array.isArray(arr)) {
+            results.push(...arr);
+          } else if (arr && typeof arr === 'object') {
+            results.push(arr as unknown as T);
+          }
+        }
       }
       return results;
     },

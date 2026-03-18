@@ -33,28 +33,78 @@
 - uptick 강화: 마지막 봉 close ≥ 직전 봉 close + 1틱
 - 보유 중 고속 체크 (5초 × 9회 rapid polling)
 
-## 매매 파이프라인
+### v2.1 (완료 — 2026-03-15)
+
+- **쉐도우 pending_buy fill 시뮬레이션**: conservative fill 모델 (bestAsk <= entryPrice, 5초 후 확정)
+- **보유시간 단축**: 5분 → 3분 (수익 중 +1분 연장, 최대 4분)
+- **no-progress exit**: 120초 경과 + MFE < 0.15% → 조기 청산
+- **targetTicks > 6 제외** (고가 저변동주 승률 4.2%)
+- **boxRangeTicks >= 2×targetTicks** 조건 추가
+- **종목당 일일 진입 2회 제한**
+- **priceTrail 기록** (5초 간격 bid/current → EXIT 로그에 포함)
+- **MFE 추적** (bestProfitPct — 보유 중 최대 수익률)
+- **우선주 하드 제외**
+
+### v2.2 (완료 — 2026-03-17) — Positive Selection 전환
+
+**핵심 전환**: "실패 거래를 더 막는 것보다, 성공 거래의 공통점을 찾아 positive selection"
+
+**배경 분석 (3/16~17 쉐도우 145건)**:
+- MFE30>0 (진입 후 30초 내 bid가 1틱이라도 상승)인 거래: 15건
+  - 승률 53%, target률 40%, 평균손익 +221원
+- MFE30=0인 거래: 130건
+  - 승률 22%, target률 11%, 평균손익 -300원
+- → **30초 follow-through가 가장 강한 positive signal**
+
+**구현 내용**:
+
+| 기능 | 상태 | 상세 |
+|------|------|------|
+| **30초 MFE 게이트** | ON | 진입 후 30초 경과 시 1회 판정. mfe30Ticks<=0이면 `no_follow_through_30s`로 즉시 청산 |
+| **Pending TTL 단축** | ON | 60초 → 15초 (config `pendingBuyTtlMs`로 조정 가능) |
+| **로깅 강화** | ON | EXIT에 mfe30Ticks/mfe30Gate/positiveScore/scoreDetails/recentMomentumPct/bestProfitPct 기록 |
+| **positiveScore** | 기록만 | 4점 만점 점수 계산 → state + 로그에 기록 (하드 게이트 OFF) |
+| **score 하드 게이트** | OFF | `positiveScoreGateEnabled: false` — 데이터 확인 후 ON 예정 |
+
+**positiveScore 항목 (4점 만점)**:
+1. recent 3m momentum > 0 (최근 3분봉 상승 추세) +1
+2. entryBoxPos 0.10~0.20 (박스 하단 sweet spot) +1
+3. boxRangePct >= 2.0% (충분한 변동성) +1
+4. targetTicks <= 5 (target 도달 확률 높은 종목) +1
+
+**MFE30 게이트 안전장치**: `mfe30GateChecked` boolean으로 5초 주기 지터와 무관하게 정확히 1회만 평가
+
+## 매매 파이프라인 (v2.2)
 
 ```
 [HTS 조건검색] → 상위 20 종목
     ↓
 [코드필터] filterQuickScalpCandidate
-  - targetTicks ≥ 3 (0.5%가 최소 3틱)
+  - targetTicks 3~6
   - spreadTicks ≤ 2
   - spread/target ≤ 25%
     ↓
 [박스하단 진입] checkBoxEntry
   - 최근 10분봉 고저 → 박스
   - 최소 변동성 체크 (boxRangePct ≥ minBoxRangePct)
+  - boxRangeTicks >= 2×targetTicks
   - 현재가 박스 하단 30% 이내
   - uptick 확인 (직전 봉 대비 +1틱 반등)
     ↓
-[매수] LIMIT 주문 (bid+1틱 진입)
+[v2.2 positiveScore 계산] calculatePositiveScore (기록용, 하드 게이트 OFF 가능)
+  - recent 3m momentum, boxPos sweet spot, boxRangePct, targetTicks
+    ↓
+[매수] LIMIT 주문 (bid+1틱 진입), pending_buy TTL=15초
+    ↓
+[v2.2 30초 MFE 게이트] — 진입 후 30초 경과 시 1회 판정
+  - mfe30Ticks > 0 → 통과, 기존 TP/SL/timeout 루프 계속
+  - mfe30Ticks <= 0 → 즉시 청산 (no_follow_through_30s)
     ↓
 [매도 판단] 5초마다 bestBid 체크
   - bestBid ≥ 목표가 (진입가×1.005) → 익절 MARKET
   - bestBid ≤ 손절가 (진입가×0.995) → 손절 MARKET
-  - 5분 경과 → 타임아웃 청산 (수익 중이면 1분 연장)
+  - 2분 + MFE < 0.15% → no-progress timeout
+  - 3분 경과 → 타임아웃 청산 (수익 중이면 +1분 연장, 최대 4분)
   - 15:20 KST → 종가 단일가 청산
 ```
 
@@ -79,39 +129,52 @@
 | 현재가 | 6,000 ~ 150,000원 |
 | 제외 | SPAC, ETN, ETF |
 
-## 쉐도우 모드 (다음 목표)
+## 다음 목표 (v2.2 배포 후)
 
-### 목표
-- `shadowMode=true` — 실제 주문 없이 가상 매매 데이터 수집
-- **100건+ 수집 후 분석**
+### 내일 (2026-03-18) 쉐도우 결과 확인 사항
 
-### 수집 데이터
-- `scalpShadowLogs`: 가상 매매 기록 (type: ENTRY/EXIT/CANCEL)
-  - **ENTRY**: 진입가, 수량, 배정금, 목표가, 손절가, 박스위치/범위, 스프레드/타깃틱, 호가정보
-  - **EXIT**: 청산가, exitReason, 수익률, 보유시간, bestBidAtExit, boxPos 등
-  - **CANCEL**: 장마감 미체결 취소
-- `scalpScanLogs`: 매 트리거 필터 통계 (조건검색 수, 코드필터 탈락, 박스진입 탈락, 진입신호 수)
+v2.2 핵심 변경 3가지가 제대로 작동하는지 아래 기준으로 확인:
 
-### 분석 체크포인트
-1. **신호 빈도**: 하루 몇 건 진입? (너무 적으면 조건 완화, 많으면 슬롯 부족)
-2. **승률**: target vs stop_loss vs timeout 비율 (break-even ~72.8%)
-3. **평균 수익률/보유시간**: 수익 vs 손실 비대칭
-4. **시간대 분포**: 오전/오후 성과 차이
-5. **필터 병목**: codeFilter vs boxEntry 어디서 가장 많이 탈락?
-6. **장마감 청산 빈도**: market_close_auction 발생 빈도
-7. **스프레드/틱 분포**: spreadTicks, targetTicks 평균
+**1. 30초 MFE 게이트 효과 검증**
+- `exitReason = 'no_follow_through_30s'` 건수 → 전체 EXIT 대비 비율
+- 게이트에 걸린 거래들의 평균 손실 vs 이전(3/16~17) timeout 평균 손실 비교
+- 게이트 통과(`mfe30Gate = 'pass'`)한 거래들의 승률/target률 → **50%+ 기대**
+- 만약 게이트 통과 거래도 대부분 손실이면 → 30초가 너무 짧거나 1틱 기준이 너무 낮은 것
 
-### 실전 전환 조건 (쉐도우 분석 후)
-- SL 비대칭 검토 (0.5% → 0.35~0.4%)
-- 슬롯 확장 (1→2)
-- 쿨다운 ON (손절 후 재진입 방지)
-- 수수료 티어 확인 (BanKIS 기준 ROUND_TRIP_COST_PCT ≈ 0.23%)
+**2. Pending TTL 15초 효과 검증**
+- CANCEL 로그에서 `shadow_pending_ttl_expired` 건수 → 이전(60초) 대비 증가폭
+- 체결(ENTRY) 건수가 급감하지 않았는지 확인
+  - 체결건 fillElapsedSec 분포 확인 (대부분 5초 이내면 15초도 넉넉)
+  - 만약 체결률 급감 → config에서 `pendingBuyTtlMs: 20000`으로 상향
 
-### 3단계 (쉐도우 이후 구현 예정)
-- 쿨다운 세분화: 손절 후 20-60분, 익절 후 5-10분
-- 후보 거래대금 정렬 → 상위 N개만 평가
-- 일일 매매 횟수 제한
-- (보류) Marketable limit (bestBid-1틱), Cloud Run 상시 프로세스
+**3. positiveScore 분포 확인**
+- 진입된 거래들의 score 분포 (0~4)
+- score별 mfe30Gate pass/fail 비율
+- score별 최종 exitReason(target/stop_loss/timeout/no_follow_through_30s) 분포
+- **score >= 3 거래만 남겼을 때 승률/손익이 유의미하게 좋으면 → 하드 게이트 ON 결정**
+
+### 하드 게이트 ON 판단 기준 (score >= 3)
+
+아래 **모두** 만족 시 config에서 `positiveScoreGateEnabled: true` 전환:
+- score >= 3 그룹의 mfe30Gate pass 비율이 score < 3 대비 **1.5배 이상**
+- score >= 3 그룹의 승률이 **35% 이상** (현재 전체 21%)
+- 샘플 수가 **score >= 3이 최소 15건 이상**
+
+### 추가 분석 후보
+
+- TTL 10초 vs 15초 비교 → CANCEL 로그의 fillConservativeAtCancel로 "10초 시점에 fill 됐을 것" 역산 가능
+- 시간대별 MFE30 게이트 pass률 → 오전/오후 차이 있으면 시간대 필터 검토
+- target 도달 거래의 score 분포 → sweet spot 항목 추가/제거 검토
+
+### 중기 로드맵
+
+| 우선순위 | 작업 | 전제 조건 |
+|----------|------|-----------|
+| 1 | positiveScore 하드 게이트 ON | 1일+ 데이터 확인 후 |
+| 2 | TTL 10초 전환 | 15초에서 체결률 문제 없으면 |
+| 3 | 실전 모드 전환 | 쉐도우 승률 40%+ & RR 1.2+ |
+| 4 | SL 비대칭 검토 (0.5% → 0.35~0.4%) | 실전 데이터 확보 후 |
+| 5 | 슬롯 확장 (5 → 8~10) | 실전 안정 후 |
 
 ## 관련 소스 파일
 

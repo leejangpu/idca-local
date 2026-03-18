@@ -36,6 +36,7 @@ import {
   checkBoxEntry,
   calculateQuickScalpTarget,
   checkMomentumScalpExit,
+  calculatePositiveScore,
 } from '../lib/momentumScalpCalculator';
 import {
   type MomentumScalpConfig,
@@ -67,11 +68,18 @@ const LUNCH_SKIP_END = 13 * 60;
 // 종가 단일가 전환 시각 (15:20 KST = 920분) — 접속매매 종료, 이후 close auction
 const MARKET_CLOSE_AUCTION_MINUTE = 15 * 60 + 20;
 
-// 보유시간 제한 (5분)
-const HOLDING_TIMEOUT_MINUTES = 5;
+// v2.1: 보유시간 제한 (3분, 기존 5분)
+const HOLDING_TIMEOUT_MINUTES = 3;
 
-// pending_buy 타임아웃 (60초 hard — 신호 stale 방지)
-const PENDING_BUY_HARD_TIMEOUT_MS = 60 * 1000;
+// v2.1: no-progress exit — 120초 경과 시 MFE < 0.15%이면 조기 청산
+const NO_PROGRESS_CHECK_MINUTES = 2;      // 120초
+const NO_PROGRESS_MFE_THRESHOLD = 0.15;   // %
+
+// pending_buy 타임아웃 — v2.2: config에서 오버라이드 가능, 기본 15초
+const DEFAULT_PENDING_BUY_TTL_MS = 15 * 1000;
+
+// v2.2: 30초 MFE 게이트 — 진입 후 30초 시점, bid가 1틱도 못 올렸으면 즉시 청산
+const MFE30_GATE_SECONDS = 30;
 
 // 매도 체크 스냅샷 — 매 라운드 최신값 덮어쓰기, 분당 1회 flush
 const sellCheckSnapshots = new Map<string, Record<string, unknown>>();
@@ -205,13 +213,109 @@ async function handlePendingBuy(
   accountNo: string,
   todayStr: string,
   chatId: string | null,
-  ctx?: AccountContext
+  ctx?: AccountContext,
+  pendingBuyTtlMs?: number
 ): Promise<string> {
   const { ticker, stockName, pendingOrderNo } = state;
+  const store = ctx?.store ?? localStore;
 
+  // ── v2.1: shadow pending_buy fill 확인 ──
+  if (state.shadowPendingAt) {
+    const pendingAtMs = new Date(state.shadowPendingAt).getTime();
+    const nowMs = Date.now();
+    const elapsedMs = nowMs - pendingAtMs;
+    const elapsedSec = Math.round(elapsedMs / 1000);
+
+    // 호가 조회로 현재 bid 확인
+    const askingPrice = await kisClient.getDomesticAskingPrice(
+      appKey, appSecret, accessToken, ticker
+    );
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    const currentBid = parseInt(askingPrice.output1?.bidp1 || '0');
+    const bestAsk = parseInt(askingPrice.output1?.askp1 || '0');
+    const entryPrice = state.entryPrice ?? 0;
+
+    // fill 모델: conservative (bestAsk <= entryPrice) vs optimistic (bid+1tick >= entryPrice)
+    const tickSize = getKoreanTickSize(entryPrice || currentBid);
+    const fillConservative = bestAsk > 0 && entryPrice > 0 && bestAsk <= entryPrice;
+    const fillOptimistic = currentBid > 0 && entryPrice > 0 && (currentBid + tickSize) >= entryPrice;
+    const isFillable = fillConservative;  // 보수적 모델 기본 사용
+
+    if (isFillable && elapsedMs >= 5000) {
+      // 5초 이상 경과 + bestAsk <= entryPrice → fill 확정, active 전환
+      updateMomentumScalpStateToActive(
+        ticker,
+        entryPrice, state.entryQuantity ?? 0,
+        state.targetPrice, state.stopLossPrice,
+        store
+      );
+      console.log(`👻 [QuickScalp-Shadow] ${ticker} pending_buy fill 확정 (${elapsedSec}초, ask=${bestAsk}, bid=${currentBid}) → active`);
+
+      // fill 확정 → ENTRY 로그 기록 (dailyEntryCount 및 분석 1:1 매칭에 사용)
+      store.appendLog('scalpShadowLogs', todayStr, {
+        type: 'ENTRY',
+        ticker,
+        stockName: stockName || ticker,
+        market: 'domestic',
+        strategy: 'quickScalp',
+        entryPrice,
+        entryQuantity: state.entryQuantity ?? 0,
+        entryAmount: entryPrice * (state.entryQuantity ?? 0),
+        allocatedAmount: state.allocatedAmount,
+        targetPrice: state.targetPrice,
+        stopLossPrice: state.stopLossPrice,
+        shadowFilled: true,
+        fillElapsedSec: elapsedSec,
+        fillBid: currentBid,
+        fillAsk: bestAsk,
+        fillModel: 'conservative',
+        fillOptimisticWouldFill: fillOptimistic,
+        entryBoxPos: state.entryBoxPos,
+        boxRangePct: state.boxRangePct,
+        spreadTicks: state.spreadTicks,
+        targetTicks: state.targetTicks,
+        createdAt: new Date().toISOString(),
+      });
+
+      return accessToken;
+    }
+
+    // v2.2: 설정 가능 TTL (기본 15초)
+    const ttlMs = pendingBuyTtlMs ?? DEFAULT_PENDING_BUY_TTL_MS;
+    if (elapsedMs >= ttlMs) {
+      console.log(`👻 [QuickScalp-Shadow] ${ticker} pending_buy ${elapsedSec}초 경과 (TTL=${ttlMs/1000}s, ask=${bestAsk}, bid=${currentBid}, entry=${entryPrice}) → unfilled, 취소`);
+      store.appendLog('scalpShadowLogs', todayStr, {
+        type: 'CANCEL',
+        ticker,
+        stockName: stockName || ticker,
+        market: 'domestic',
+        strategy: 'quickScalp',
+        reason: 'shadow_pending_ttl_expired',
+        elapsedSec,
+        entryPrice,
+        currentBid,
+        lastAsk: bestAsk,
+        fillConservativeAtCancel: fillConservative,
+        fillOptimisticAtCancel: fillOptimistic,
+        allocatedAmount: state.allocatedAmount,
+        createdAt: new Date().toISOString(),
+      });
+      deleteMomentumScalpState(ticker, store);
+      return accessToken;
+    }
+
+    // soft 경고 (TTL의 2/3 경과 시)
+    if (elapsedMs >= ttlMs * 0.67) {
+      console.log(`👻 [QuickScalp-Shadow] ${ticker} pending_buy ${elapsedSec}초 경과 (TTL=${ttlMs/1000}s), bid=${currentBid} vs entry=${entryPrice} — 대기 중`);
+    }
+
+    return accessToken;
+  }
+
+  // ── 실전 모드: 기존 pending_buy 체결 확인 ──
   console.log(`[QuickScalp] Checking pending_buy: ${ticker} (order=${pendingOrderNo})`);
 
-  // 체결 확인
   const orderHistory = await kisClient.getDomesticOrderHistory(
     appKey, appSecret, accessToken, accountNo,
     todayStr, todayStr,
@@ -226,10 +330,8 @@ async function handlePendingBuy(
   );
 
   if (filledOrder) {
-    // 체결 성공 → active 전환 + 0.5% 목표/손절 설정
     const entryPrice = parseInt(filledOrder.avg_prvs || '0');
     const quantity = parseInt(filledOrder.tot_ccld_qty || '0');
-
     const { targetPrice, stopLossPrice } = calculateQuickScalpTarget(entryPrice);
 
     updateMomentumScalpStateToActive(
@@ -249,15 +351,14 @@ async function handlePendingBuy(
       );
     }
   } else {
-    // 미체결 — soft 30초 / hard 60초 TTL
+    // 미체결 — v2.2: 설정 가능 TTL (기본 15초)
     const updatedAtMs = state.updatedAt ? new Date(state.updatedAt).getTime() : 0;
     const nowMs = Date.now();
     const elapsedMs = nowMs - updatedAtMs;
+    const realTtlMs = pendingBuyTtlMs ?? DEFAULT_PENDING_BUY_TTL_MS;
 
-    const shouldCancel = elapsedMs >= PENDING_BUY_HARD_TIMEOUT_MS;
-
-    if (shouldCancel) {
-      console.log(`[QuickScalp] ${ticker} pending_buy ${Math.round(elapsedMs / 1000)}초 경과 → 취소`);
+    if (elapsedMs >= realTtlMs) {
+      console.log(`[QuickScalp] ${ticker} pending_buy ${Math.round(elapsedMs / 1000)}초 경과 (TTL=${realTtlMs/1000}s) → 취소`);
 
       if (pendingOrderNo) {
         try {
@@ -367,6 +468,26 @@ async function handleNewBuy(
     }
   }
 
+  // v2.1: 종목당 일일 진입 횟수 추적 (max 2/ticker/day)
+  const MAX_ENTRIES_PER_TICKER_PER_DAY = 2;
+  const dailyEntryCount = new Map<string, number>();
+  // 완료된 거래 (실전: scalpTradeLogs, 쉐도우: scalpShadowLogs)
+  const logCollection = scalpConfig.shadowMode ? 'scalpShadowLogs' : 'scalpTradeLogs';
+  const todayTradeLogs = store.getLogs<{ ticker: string; type?: string }>(logCollection, todayStr);
+  for (const logData of todayTradeLogs) {
+    // ENTRY 로그만 카운트 (EXIT은 별도)
+    if (logData.type === 'ENTRY' || (!logData.type && logData.ticker)) {
+      dailyEntryCount.set(logData.ticker, (dailyEntryCount.get(logData.ticker) ?? 0) + 1);
+    }
+  }
+  // 현재 진행 중인 state도 카운트
+  const currentStates = store.getAllStates<MomentumScalpState>('momentumScalpState');
+  for (const [, s] of currentStates) {
+    if (['active', 'pending_buy', 'pending_sell'].includes(s.status)) {
+      dailyEntryCount.set(s.ticker, (dailyEntryCount.get(s.ticker) ?? 0) + 1);
+    }
+  }
+
   // 점유 종목 + 쿨다운 제외 + 다른 전략 점유 종목
   const occupiedSet = new Set(refill.occupiedTickers);
   for (const t of getOccupiedTickersExcluding('domestic', 'momentumScalp')) {
@@ -379,6 +500,15 @@ async function handleNewBuy(
     const name = candidate.name;
     const price = Math.round(parseFloat(candidate.price || '0'));
 
+    // v2.1: 우선주 하드 제외 (ticker 끝자리 5 + 6자리, 또는 이름에 '우' 포함)
+    const isPreferred = (ticker.length === 6 && ticker.endsWith('5')) ||
+                        /[KLMN]$/.test(ticker) ||
+                        name.includes('우선') || (name.endsWith('우') && !name.endsWith('건설우'));
+    if (isPreferred) {
+      console.log(`🚫 [QuickScalp] ${name}(${ticker}) — 우선주 제외 (skip)`);
+      continue;
+    }
+
     if (occupiedSet.has(ticker)) {
       console.log(`⏭️ [QuickScalp] ${name}(${ticker}) — 이미 보유중 (skip)`);
       continue;
@@ -387,6 +517,14 @@ async function handleNewBuy(
       console.log(`🧊 [QuickScalp] ${name}(${ticker}) — 오늘 손절/타임아웃 기록, 쿨다운 (skip)`);
       continue;
     }
+
+    // v2.1: max 2/ticker/day
+    const entryCount = dailyEntryCount.get(ticker) ?? 0;
+    if (entryCount >= MAX_ENTRIES_PER_TICKER_PER_DAY) {
+      console.log(`🔢 [QuickScalp] ${name}(${ticker}) — 일일 진입 한도 도달 (${entryCount}/${MAX_ENTRIES_PER_TICKER_PER_DAY}, skip)`);
+      continue;
+    }
+
     if (price <= 0) continue;
     evalTargets.push({ ticker, name, price });
   }
@@ -461,7 +599,7 @@ async function handleNewBuy(
       await new Promise(resolve => setTimeout(resolve, 300));
 
       const spreadPct = (askPrice - bidPrice) / currentPrice * 100;
-      const boxResult = checkBoxEntry({ minuteBars, currentPrice, spreadPct });
+      const boxResult = checkBoxEntry({ minuteBars, currentPrice, spreadPct, targetTicks: filterResult.targetTicks });
 
       if (!boxResult.shouldEnter) {
         scanStats.boxEntryFailCount++;
@@ -482,37 +620,67 @@ async function handleNewBuy(
         continue;
       }
 
+      const boxRangePctVal = boxResult.boxHigh > 0 ? ((boxResult.boxHigh - boxResult.boxLow) / currentPrice * 100) : 0;
       const entryConditions = {
         entryBoxPos: boxResult.currentPosition,
-        boxRangePct: boxResult.boxHigh > 0 ? ((boxResult.boxHigh - boxResult.boxLow) / currentPrice * 100) : null,
+        boxRangePct: boxRangePctVal || null,
         spreadTicks: filterResult.spreadTicks,
         targetTicks: filterResult.targetTicks,
       };
 
+      // v2.2: Positive Selection Score 계산 (기록용, 하드 게이트는 config로 별도 ON)
+      const scoreResult = calculatePositiveScore({
+        recentBars: minuteBars,
+        entryBoxPos: boxResult.currentPosition,
+        boxRangePct: boxRangePctVal,
+        targetTicks: filterResult.targetTicks,
+      });
+
+      // v2.2: score 하드 게이트 (config.positiveScoreGateEnabled = true 일 때만)
+      if (scalpConfig.positiveScoreGateEnabled) {
+        const minScore = scalpConfig.positiveScoreMinimum ?? 3;
+        if (scoreResult.score < minScore) {
+          console.log(`📊 [QuickScalp] ${target.name}(${target.ticker}) — positiveScore ${scoreResult.score} < ${minScore} (${scoreResult.details.join(', ')}) → 스킵`);
+          evalDetails.push({ ticker: target.ticker, name: target.name, price: currentPrice, stage: 'positiveScore', pass: false, reason: `score ${scoreResult.score} < ${minScore}`, askPrice, bidPrice, spreadTicks: filterResult.spreadTicks, targetTicks: filterResult.targetTicks, boxPos: boxResult.currentPosition, boxHigh: boxResult.boxHigh, boxLow: boxResult.boxLow });
+          continue;
+        }
+      }
+
+      console.log(`📊 [QuickScalp] ${target.name}(${target.ticker}) — positiveScore=${scoreResult.score} [${scoreResult.details.join(', ')}] mom=${scoreResult.recentMomentumPct?.toFixed(2) ?? 'N/A'}%`);
+
       evalDetails.push({ ticker: target.ticker, name: target.name, price: currentPrice, stage: 'entry', pass: true, askPrice, bidPrice, spreadTicks: filterResult.spreadTicks, targetTicks: filterResult.targetTicks, boxPos: boxResult.currentPosition, boxHigh: boxResult.boxHigh, boxLow: boxResult.boxLow });
 
       if (scalpConfig.shadowMode) {
-        // ── 쉐도우 모드: 주문 없이 즉시 active (가상 체결 bid+1틱) ──
+        // ── v2.1 쉐도우 모드: pending_buy로 생성 → 매도 루프에서 fill 확인 ──
+        // 즉시 active 대신 pending_buy 유지, shadowPendingAt 기록
+        // 매도 루프의 handlePendingBuy에서 30s soft / 60s hard TTL로 fill 판단
         const { targetPrice: tp, stopLossPrice: sl } = calculateQuickScalpTarget(buyPrice);
+        const now = new Date().toISOString();
 
         createMomentumScalpState(
           target.ticker, target.name,
-          refill.amountPerSlot, null, entryConditions, store
+          refill.amountPerSlot, null, entryConditions, store,
+          now  // shadowPendingAt
         );
-        updateMomentumScalpStateToActive(
-          target.ticker,
-          buyPrice, quantity, tp, sl, store
-        );
+        // pending_buy 상태로 남김 — 의도 매수가/수량/TP/SL + v2.2 score 저장
+        const pendingStore = ctx?.store ?? localStore;
+        pendingStore.updateState('momentumScalpState', target.ticker, {
+          entryPrice: buyPrice, entryQuantity: quantity,
+          targetPrice: tp, stopLossPrice: sl,
+          positiveScore: scoreResult.score,
+          positiveScoreDetails: scoreResult.details.join(', ') || null,
+        });
 
         scanStats.entrySignalCount++;
         filledCount++;
         occupiedSet.add(target.ticker);
 
-        console.log(`👻 [QuickScalp-Shadow] ${target.name}(${target.ticker}) — 가상 매수: ${quantity}주 @ ${buyPrice.toLocaleString()}원 (bid+1틱) TP=${tp.toLocaleString()} SL=${sl.toLocaleString()}`);
+        const ttlLabel = (scalpConfig.pendingBuyTtlMs ?? DEFAULT_PENDING_BUY_TTL_MS) / 1000;
+        console.log(`👻 [QuickScalp-Shadow] ${target.name}(${target.ticker}) — 가상 pending_buy: ${quantity}주 @ ${buyPrice.toLocaleString()}원 (bid+1틱) TP=${tp.toLocaleString()} SL=${sl.toLocaleString()} [${ttlLabel}s TTL] score=${scoreResult.score}`);
 
-        // 쉐도우 진입 로그 파일 기록
+        // 쉐도우 진입 로그 파일 기록 (PENDING_ENTRY — fill 확정 시 ENTRY로 별도 기록)
         store.appendLog('scalpShadowLogs', todayStr, {
-          type: 'ENTRY',
+          type: 'PENDING_ENTRY',
           ticker: target.ticker,
           stockName: target.name,
           market: 'domestic',
@@ -523,6 +691,7 @@ async function handleNewBuy(
           allocatedAmount: refill.amountPerSlot,
           targetPrice: tp,
           stopLossPrice: sl,
+          shadowPending: true,
           // 진입 조건
           entryBoxPos: entryConditions.entryBoxPos,
           boxRangePct: entryConditions.boxRangePct,
@@ -538,7 +707,11 @@ async function handleNewBuy(
           recentBars: minuteBars.slice(-10).map(b => ({
             t: b.time, o: b.open, h: b.high, l: b.low, c: b.close,
           })),
-          createdAt: new Date().toISOString(),
+          // v2.2 positive selection
+          positiveScore: scoreResult.score,
+          positiveScoreDetails: scoreResult.details.join(', ') || null,
+          recentMomentumPct: scoreResult.recentMomentumPct,
+          createdAt: now,
         });
       } else {
         // ── 실전 모드: 실제 매수 주문 ──
@@ -553,6 +726,12 @@ async function handleNewBuy(
             target.ticker, target.name,
             refill.amountPerSlot, orderResult.output.ODNO, entryConditions, store
           );
+          // v2.2: score를 state에 저장
+          const realStore = ctx?.store ?? localStore;
+          realStore.updateState('momentumScalpState', target.ticker, {
+            positiveScore: scoreResult.score,
+            positiveScoreDetails: scoreResult.details.join(', ') || null,
+          });
 
           scanStats.entrySignalCount++;
           filledCount++;
@@ -603,7 +782,7 @@ function writeTradeLog(
     entryQuantity: number;
     exitPrice: number;
     exitQuantity: number;
-    exitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction';
+    exitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction' | 'no_follow_through_30s';
     allocatedAmount: number;
     enteredAt: string | null;
     // 진입 조건 기록
@@ -613,6 +792,12 @@ function writeTradeLog(
     targetTicks?: number | null;       // 0.5% 도달에 필요한 틱 수
     // 실행 품질 기록
     bestBidAtExit?: number | null;     // 매도 판단 시점의 best bid
+    // v2.2
+    mfe30Ticks?: number | null;
+    mfe30Gate?: string | null;
+    positiveScore?: number | null;
+    positiveScoreDetails?: string | null;
+    bestProfitPct?: number | null;
   },
   ctx?: AccountContext
 ): void {
@@ -662,6 +847,12 @@ function writeTradeLog(
     // 실행 품질
     bestBidAtExit: bestBidAtExit ?? null,
     timeToExitSec,
+    // v2.2
+    mfe30Ticks: params.mfe30Ticks ?? null,
+    mfe30Gate: params.mfe30Gate ?? null,
+    positiveScore: params.positiveScore ?? null,
+    positiveScoreDetails: params.positiveScoreDetails ?? null,
+    bestProfitPct: params.bestProfitPct ?? null,
     createdAt: new Date().toISOString(),
   });
 
@@ -679,7 +870,7 @@ function writeShadowTradeLog(
     entryPrice: number;
     entryQuantity: number;
     exitPrice: number;
-    exitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction';
+    exitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction' | 'no_follow_through_30s';
     allocatedAmount: number;
     enteredAt: string | null;
     entryBoxPos?: number | null;
@@ -688,6 +879,13 @@ function writeShadowTradeLog(
     targetTicks?: number | null;
     bestBidAtExit?: number | null;
     currentPriceAtExit?: number | null;
+    // v2.2 로깅
+    mfe30Ticks?: number | null;
+    mfe30Gate?: 'pass' | 'fail' | 'pending' | null;
+    positiveScore?: number | null;
+    positiveScoreDetails?: string | null;
+    recentMomentumPct?: number | null;
+    bestProfitPct?: number | null;
   },
   ctx?: AccountContext
 ): void {
@@ -739,6 +937,13 @@ function writeShadowTradeLog(
     timeToExitSec,
     // 보유 중 가격 궤적 (5초 간격 bid/current)
     priceTrail: priceTrails.get(ticker) || [],
+    // v2.2 분석용 필드
+    mfe30Ticks: params.mfe30Ticks ?? null,
+    mfe30Gate: params.mfe30Gate ?? null,
+    positiveScore: params.positiveScore ?? null,
+    positiveScoreDetails: params.positiveScoreDetails ?? null,
+    recentMomentumPct: params.recentMomentumPct ?? null,
+    bestProfitPct: params.bestProfitPct ?? null,
     createdAt: new Date().toISOString(),
   });
 
@@ -995,6 +1200,7 @@ async function processSellAccount(
   const EXIT_CHECK_INTERVAL_MS = 5000;
   const EXIT_CHECK_MAX_ROUNDS = 9;
   const startMs = Date.now();
+  const exitedTickers = new Set<string>(); // 이번 실행에서 이미 청산한 ticker — 중복 청산 방지
 
   for (let round = 0; round < EXIT_CHECK_MAX_ROUNDS; round++) {
     // 안전 타임아웃: 실행 시작 후 45초 초과 시 중단
@@ -1022,7 +1228,8 @@ async function processSellAccount(
         accessToken = await handlePendingBuy(
           state,
           kisClient, appKey, appSecret, accessToken, accountNo,
-          todayStr, chatId, ctx
+          todayStr, chatId, ctx,
+          scalpConfig.pendingBuyTtlMs
         );
       } catch (err) {
         if (isTokenExpiredError(err)) {
@@ -1035,9 +1242,9 @@ async function processSellAccount(
       await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    // active 종목 exit 체크
+    // active 종목 exit 체크 (이미 청산한 ticker 제외)
     const activeStates = Array.from(roundStates.values())
-      .filter(s => s.status === 'active');
+      .filter(s => s.status === 'active' && !exitedTickers.has(s.ticker));
 
     if (activeStates.length === 0 && round > 0) {
       // pending_buy만 남아있으면 계속 체결 확인 루프
@@ -1054,6 +1261,11 @@ async function processSellAccount(
           kisClient, appKey, appSecret, accessToken, accountNo,
           chatId, scalpConfig.shadowMode, ctx
         );
+        // 청산 완료 확인: state가 삭제되었으면 exitedTickers에 추가
+        const postState = getMomentumScalpStateByTicker(state.ticker, store);
+        if (!postState) {
+          exitedTickers.add(state.ticker);
+        }
       } catch (err) {
         if (isTokenExpiredError(err)) {
           accessToken = await getOrRefreshToken(
@@ -1131,11 +1343,110 @@ async function handleSellCheck(
     holdingMinutes = getKRMarketMinutesBetween(new Date(state.enteredAt).getTime(), Date.now());
   }
 
-  // 보유시간 타임아웃 체크 (5분 기본, 수익 중이면 6분까지 연장)
-  // 수익 판단은 왕복 비용(수수료+세금) 차감 후 순수익 기준
+  // v2.1: MFE(최대 수익률) 추적 — state에 bestProfitPct 갱신
+  const currentProfitPct = ((bidPrice - entryPrice) / entryPrice) * 100;
+  const prevBestProfitPct = state.bestProfitPct ?? 0;
+  if (currentProfitPct > prevBestProfitPct) {
+    const storeForUpdate = ctx?.store ?? localStore;
+    storeForUpdate.updateState('momentumScalpState', ticker, {
+      bestProfitPct: currentProfitPct,
+    });
+  }
+  const bestProfitPct = Math.max(prevBestProfitPct, currentProfitPct);
+
+  // 보유 경과시간 (초)
+  const holdingSeconds = state.enteredAt
+    ? Math.round((Date.now() - new Date(state.enteredAt).getTime()) / 1000)
+    : 0;
+
+  // ── v2.2: 30초 MFE 게이트 ──
+  // 진입 후 30초 경과 && 아직 미평가 → bid가 1틱이라도 올라왔는지 판정
+  // mfe30GateChecked로 1회만 평가 (5초 주기 지터에도 안전)
+  if (!state.mfe30GateChecked && holdingSeconds >= MFE30_GATE_SECONDS) {
+    const tickSize = getKoreanTickSize(entryPrice);
+    const maxBidSinceEntry = entryPrice * (1 + bestProfitPct / 100);
+    const mfe30Ticks = Math.floor((maxBidSinceEntry - entryPrice) / tickSize);
+
+    // state에 gate 평가 완료 기록
+    const storeForGate = ctx?.store ?? localStore;
+    storeForGate.updateState('momentumScalpState', ticker, {
+      mfe30GateChecked: true,
+    });
+
+    if (mfe30Ticks <= 0) {
+      // 30초 내 1틱도 못 밀어줌 → 즉시 청산
+      console.log(`🚫 [QuickScalp-Sell] ${ticker} MFE30 게이트 실패: mfe30Ticks=${mfe30Ticks} (bestProfitPct=${bestProfitPct.toFixed(3)}%, ${holdingSeconds}s) → 즉시 청산`);
+
+      const exitPrice = bidPrice;
+      const profitRate = ((exitPrice - entryPrice) / entryPrice * 100).toFixed(2);
+      const profitAmount = (exitPrice - entryPrice) * entryQuantity;
+
+      if (shadowMode) {
+        writeShadowTradeLog({
+          ticker,
+          stockName: stockName || ticker,
+          entryPrice,
+          entryQuantity,
+          exitPrice,
+          exitReason: 'no_follow_through_30s',
+          allocatedAmount: state.allocatedAmount,
+          enteredAt: state.enteredAt,
+          entryBoxPos: state.entryBoxPos,
+          boxRangePct: state.boxRangePct,
+          spreadTicks: state.spreadTicks,
+          targetTicks: state.targetTicks,
+          bestBidAtExit: bidPrice,
+          currentPriceAtExit: currentPrice,
+          mfe30Ticks: mfe30Ticks,
+          mfe30Gate: 'fail',
+          positiveScore: state.positiveScore,
+          positiveScoreDetails: state.positiveScoreDetails,
+          bestProfitPct: bestProfitPct,
+        }, ctx);
+
+        deleteMomentumScalpState(ticker, ctx?.store);
+        console.log(`👻 [QuickScalp-Shadow] ${ticker} MFE30 게이트 청산: ${profitRate}% (${profitAmount.toLocaleString()}원)`);
+        return accessToken;
+      } else {
+        // 실전 모드: MARKET 매도
+        const sellResult = await kisClient.submitDomesticOrder(
+          appKey, appSecret, accessToken, accountNo,
+          { ticker, side: 'SELL', orderType: 'MARKET', price: 0, quantity: entryQuantity }
+        );
+        if (sellResult.output?.ODNO) {
+          updateMomentumScalpStateToPendingSell(
+            ticker, sellResult.output.ODNO,
+            'no_follow_through_30s',
+            bidPrice, ctx?.store
+          );
+          console.log(`[QuickScalp-Sell] ${ticker} MFE30 게이트 매도 주문: ${sellResult.output.ODNO}`);
+          if (chatId) {
+            await sendTelegramMessage(chatId,
+              `🚫 <b>[스캘핑] ${stockName} MFE30 게이트 청산</b>\n` +
+              `${entryQuantity}주 @ 시장가\n` +
+              `30초 내 follow-through 없음 (mfe30Ticks=${mfe30Ticks})`,
+              'HTML'
+            );
+          }
+        }
+        return accessToken;
+      }
+    } else {
+      console.log(`✅ [QuickScalp-Sell] ${ticker} MFE30 게이트 통과: mfe30Ticks=${mfe30Ticks} (bestProfitPct=${bestProfitPct.toFixed(3)}%, ${holdingSeconds}s)`);
+    }
+  }
+
+  // 보유시간 타임아웃 체크 (v2.1: 3분, 수익 중이면 +1분 연장)
   const ROUND_TRIP_COST_PCT = 0.0023; // ~0.23% (수수료 0.015%×2 + 세금 0.18%, BanKIS 기준)
   let isTimeout = false;
-  if (holdingMinutes >= HOLDING_TIMEOUT_MINUTES) {
+
+  // v2.1: no-progress exit — 120초 경과 시 MFE < 0.15%이면 조기 청산
+  if (!isTimeout && holdingMinutes >= NO_PROGRESS_CHECK_MINUTES && bestProfitPct < NO_PROGRESS_MFE_THRESHOLD) {
+    isTimeout = true;
+    console.log(`[QuickScalp-Sell] ${ticker} 보유 ${holdingMinutes}분, MFE ${bestProfitPct.toFixed(2)}% < ${NO_PROGRESS_MFE_THRESHOLD}% → no-progress timeout`);
+  }
+
+  if (!isTimeout && holdingMinutes >= HOLDING_TIMEOUT_MINUTES) {
     const breakEvenPrice = entryPrice * (1 + ROUND_TRIP_COST_PCT);
     const isNetProfitable = bidPrice > breakEvenPrice;
 
@@ -1151,7 +1462,7 @@ async function handleSellCheck(
   }
 
   // 매도 판단 — 모든 매도는 MARKET (bestBid 기준 판단, 즉시 청산)
-  let exitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction';
+  let exitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction' | 'no_follow_through_30s';
 
   if (isTimeout) {
     exitReason = 'timeout';
@@ -1214,6 +1525,14 @@ async function handleSellCheck(
     const profitRate = ((exitPrice - entryPrice) / entryPrice * 100).toFixed(2);
     const profitAmount = (exitPrice - entryPrice) * entryQuantity;
 
+    // v2.2: MFE30 게이트 결과 계산 (로깅용)
+    const tickSizeForLog = getKoreanTickSize(entryPrice);
+    const maxBidForLog = entryPrice * (1 + bestProfitPct / 100);
+    const mfe30TicksForLog = state.mfe30GateChecked
+      ? Math.floor((maxBidForLog - entryPrice) / tickSizeForLog)
+      : null;
+    const mfe30GateForLog = state.mfe30GateChecked ? 'pass' : 'pending';
+
     writeShadowTradeLog({
       ticker,
       stockName: stockName || ticker,
@@ -1229,6 +1548,11 @@ async function handleSellCheck(
       targetTicks: state.targetTicks,
       bestBidAtExit: bidPrice,
       currentPriceAtExit: currentPrice,
+      mfe30Ticks: mfe30TicksForLog,
+      mfe30Gate: mfe30GateForLog,
+      positiveScore: state.positiveScore,
+      positiveScoreDetails: state.positiveScoreDetails,
+      bestProfitPct: bestProfitPct,
     }, ctx);
 
     deleteMomentumScalpState(ticker, ctx?.store);

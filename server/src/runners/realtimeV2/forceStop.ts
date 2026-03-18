@@ -8,8 +8,6 @@ import * as localStore from '../../lib/localStore';
 import { KisApiClient, getOrRefreshToken, isTokenExpiredError } from '../../lib/kisApi';
 import { AccountContext } from '../../lib/accountContext';
 import {
-  getMarketStrategyConfig,
-  setMarketStrategyConfig,
   type AccountStrategy,
   type MarketType,
 } from '../../lib/configHelper';
@@ -113,7 +111,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
 
   if (!state) {
     // state 없으면 config에서만 제거
-    await removeTickerFromConfig(ticker, market, strategyId);
+    await removeTickerFromConfig(ticker, market, strategyId, ctx);
     return { success: true, soldQty: 0, message: '보유 없음, 추적종료 완료' };
   }
 
@@ -204,7 +202,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
   store.deleteState('realtimeDdsobV2State', ticker);
 
   // 7. config에서 종목 제거
-  await removeTickerFromConfig(ticker, market, strategyId);
+  await removeTickerFromConfig(ticker, market, strategyId, ctx);
 
   console.log(`[ForceStop:${tag}] Completed: ${ticker} ${soldQty}주 매도, 추적종료`);
   return { success: true, soldQty, message: `${ticker} ${soldQty}주 매도 완료, 추적종료` };
@@ -219,15 +217,17 @@ export async function forceStopRealtimeDdsobV2Ticker(
 export async function removeTickerFromConfig(
   ticker: string,
   market: MarketType,
-  strategyId: AccountStrategy = 'realtimeDdsobV2'
+  strategyId: AccountStrategy = 'realtimeDdsobV2',
+  ctx?: AccountContext
 ): Promise<void> {
-  const strategyConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
+  const store = ctx?.store ?? localStore;
+  const strategyConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(market, strategyId);
   if (strategyConfig) {
     const allTickers = extractTickerConfigsV2(strategyConfig as unknown as Record<string, unknown>);
     if (allTickers.some(t => t.ticker === ticker)) {
       const remaining = allTickers.filter(t => t.ticker !== ticker);
-      const currentConfig = getMarketStrategyConfig<Record<string, unknown>>(market, strategyId) || {};
-      setMarketStrategyConfig(market, strategyId, {
+      const currentConfig = store.getStrategyConfig<Record<string, unknown>>(market, strategyId) || {};
+      store.setStrategyConfig(market, strategyId, {
         ...currentConfig,
         tickers: remaining,
       });

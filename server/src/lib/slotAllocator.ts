@@ -39,6 +39,10 @@ export interface MomentumScalpConfig {
   conditionSeq: string;
   cooldownEnabled?: boolean;
   shadowMode?: boolean;
+  // v2.2
+  pendingBuyTtlMs?: number;           // pending_buy TTL (ms), 기본 15000
+  positiveScoreGateEnabled?: boolean;  // score >= 3 하드 게이트 ON/OFF, 기본 false
+  positiveScoreMinimum?: number;       // 하드 게이트 최소 점수, 기본 3
 }
 
 export interface MomentumScalpState {
@@ -55,12 +59,19 @@ export interface MomentumScalpState {
   enteredAt: string | null;
   updatedAt: string;
   sellOrderNo: string | null;
-  sellExitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction' | null;
+  sellExitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction' | 'no_follow_through_30s' | null;
   entryBoxPos: number | null;
   boxRangePct: number | null;
   spreadTicks: number | null;
   targetTicks: number | null;
   bestBidAtExit: number | null;
+  // v2.1
+  shadowPendingAt: string | null;  // shadow pending_buy 생성 시각
+  bestProfitPct: number | null;    // MFE 추적 (보유 중 최대 수익률 %)
+  // v2.2
+  mfe30GateChecked: boolean;       // 30초 MFE 게이트 평가 완료 여부
+  positiveScore: number | null;    // 진입 전 positive selection 점수
+  positiveScoreDetails: string | null;  // 점수 세부 사항
 }
 
 export interface SlotRefillResult {
@@ -144,7 +155,8 @@ export function createMomentumScalpState(
   ticker: string, stockName: string, allocatedAmount: number,
   pendingOrderNo: string | null,
   entryConditions?: { entryBoxPos: number | null; boxRangePct: number | null; spreadTicks: number | null; targetTicks: number | null },
-  store?: AccountStore
+  store?: AccountStore,
+  shadowPendingAt?: string | null
 ): void {
   (store ?? localStore).setState(STATE_COLLECTION, ticker, {
     ticker, stockName, market: 'domestic', status: 'pending_buy',
@@ -152,6 +164,8 @@ export function createMomentumScalpState(
     allocatedAmount, pendingOrderNo, enteredAt: null, sellOrderNo: null, sellExitReason: null,
     entryBoxPos: entryConditions?.entryBoxPos ?? null, boxRangePct: entryConditions?.boxRangePct ?? null,
     spreadTicks: entryConditions?.spreadTicks ?? null, targetTicks: entryConditions?.targetTicks ?? null,
+    shadowPendingAt: shadowPendingAt ?? null, bestProfitPct: null,
+    mfe30GateChecked: false, positiveScore: null, positiveScoreDetails: null,
   });
 }
 
@@ -163,6 +177,7 @@ export function updateMomentumScalpStateToActive(
   (store ?? localStore).updateState(STATE_COLLECTION, ticker, {
     status: 'active', entryPrice, entryQuantity, targetPrice, stopLossPrice,
     pendingOrderNo: null, enteredAt: new Date().toISOString(),
+    shadowPendingAt: null, bestProfitPct: 0, mfe30GateChecked: false,
   });
 }
 
@@ -172,7 +187,7 @@ export function deleteMomentumScalpState(ticker: string, store?: AccountStore): 
 
 export function updateMomentumScalpStateToPendingSell(
   ticker: string, sellOrderNo: string,
-  sellExitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction',
+  sellExitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction' | 'no_follow_through_30s',
   bestBidAtExit?: number | null,
   store?: AccountStore
 ): void {

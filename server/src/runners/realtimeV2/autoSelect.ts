@@ -9,8 +9,6 @@ import { KisApiClient, getOrRefreshToken, isTokenExpiredError } from '../../lib/
 import { AccountContext } from '../../lib/accountContext';
 import {
   getCommonConfig,
-  getMarketStrategyConfig,
-  setMarketStrategyConfig,
   isMarketStrategyActive,
   type AccountStrategy,
   type MarketType,
@@ -362,10 +360,11 @@ export async function getConditionList(htsUserId: string, ctx?: AccountContext):
  * 원본: triggerAutoSelectStocksV2 (HTTP) → plain function
  */
 export async function triggerAutoSelectStocks(market: string, ctx?: AccountContext): Promise<{ success: boolean; message: string }> {
+  const store = ctx?.store ?? localStore;
   const isUS = market === 'overseas';
   console.log(`[AutoSelect:Manual:${isUS ? 'US' : 'KR'}] Triggered`);
 
-  const commonConfig = getCommonConfig();
+  const commonConfig = ctx ? ctx.store.getTradingConfig<ReturnType<typeof getCommonConfig>>() : getCommonConfig();
   if (!commonConfig) {
     throw new Error('Trading config not found');
   }
@@ -378,7 +377,7 @@ export async function triggerAutoSelectStocks(market: string, ctx?: AccountConte
   }
 
   if (isUS && isV2_1Active) {
-    const rdConfig = getMarketStrategyConfig<RealtimeDdsobV2_1Config & { autoSelectConfigUS?: AutoSelectConfigV2_1 }>(targetMarket, 'realtimeDdsobV2_1');
+    const rdConfig = store.getStrategyConfig<RealtimeDdsobV2_1Config & { autoSelectConfigUS?: AutoSelectConfigV2_1 }>(targetMarket, 'realtimeDdsobV2_1');
     if (!rdConfig?.autoSelectEnabledUS) {
       throw new Error('v2.1 해외 자동 종목선정이 비활성화 상태입니다');
     }
@@ -393,7 +392,7 @@ export async function triggerAutoSelectStocks(market: string, ctx?: AccountConte
     return { success: true, message: 'v2.1 해외 지표 자동선별이 완료되었습니다' };
   }
 
-  const rdConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>(targetMarket, 'realtimeDdsobV2');
+  const rdConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(targetMarket, 'realtimeDdsobV2');
 
   if (isUS) {
     if (!rdConfig?.autoSelectEnabled) {
@@ -442,11 +441,12 @@ export async function runAutoSelectKR(ctx?: AccountContext): Promise<void> {
   }
 
   try {
-    const commonConfig = getCommonConfig();
+    const store = ctx?.store ?? localStore;
+    const commonConfig = ctx ? store.getTradingConfig<ReturnType<typeof getCommonConfig>>() : getCommonConfig();
     if (!commonConfig) return;
     if (!isMarketStrategyActive(commonConfig, 'domestic', 'realtimeDdsobV2')) return;
 
-    const rdConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
+    const rdConfig = store.getStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
     if (!rdConfig?.autoSelectEnabled) return;
 
     const autoConfig = rdConfig.autoSelectConfig as AutoSelectConfig;
@@ -485,7 +485,8 @@ export async function runAutoSelectUS(ctx?: AccountContext): Promise<void> {
   }
 
   try {
-    const commonConfig = getCommonConfig();
+    const store = ctx?.store ?? localStore;
+    const commonConfig = ctx ? store.getTradingConfig<ReturnType<typeof getCommonConfig>>() : getCommonConfig();
     if (!commonConfig) return;
 
     const isV2 = isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2');
@@ -493,14 +494,14 @@ export async function runAutoSelectUS(ctx?: AccountContext): Promise<void> {
     if (!isV2 && !isV2_1) return;
 
     if (isV2_1) {
-      const rdConfig = getMarketStrategyConfig<RealtimeDdsobV2_1Config & { autoSelectConfigUS?: AutoSelectConfigV2_1 }>('overseas', 'realtimeDdsobV2_1');
+      const rdConfig = store.getStrategyConfig<RealtimeDdsobV2_1Config & { autoSelectConfigUS?: AutoSelectConfigV2_1 }>('overseas', 'realtimeDdsobV2_1');
       if (!rdConfig?.autoSelectEnabledUS) return;
       const autoConfigV2_1 = rdConfig.autoSelectConfigUS;
       if (!autoConfigV2_1) return;
       if (autoConfigV2_1.principalMode === 'manual' && !autoConfigV2_1.principalPerTicker) return;
       await processAutoSelectStocksV2_1US(autoConfigV2_1, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
     } else {
-      const rdConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
+      const rdConfig = store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
       if (!rdConfig?.autoSelectEnabled) return;
       const autoConfigUS = rdConfig.autoSelectConfig as unknown as AutoSelectConfigUS;
       if (!autoConfigUS) return;
@@ -835,7 +836,7 @@ export async function processAutoSelectStocks(
 
   // 동시 실행 방어: write 직전 최신 config에서 국내 auto 수 재확인
   if (mode === 'refill') {
-    const freshStrategyConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
+    const freshStrategyConfig = store.getStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
     if (freshStrategyConfig) {
       const freshTickers = extractTickerConfigsV2(freshStrategyConfig as unknown as Record<string, unknown>);
       const freshAutoCount = freshTickers.filter(t => t.autoSelected && t.market === 'domestic').length;
@@ -847,8 +848,8 @@ export async function processAutoSelectStocks(
   }
 
   // config 저장
-  const currentConfig = getMarketStrategyConfig<Record<string, unknown>>('domestic', 'realtimeDdsobV2') || {};
-  setMarketStrategyConfig('domestic', 'realtimeDdsobV2', {
+  const currentConfig = store.getStrategyConfig<Record<string, unknown>>('domestic', 'realtimeDdsobV2') || {};
+  store.setStrategyConfig('domestic', 'realtimeDdsobV2', {
     ...currentConfig,
     tickers: updatedTickers,
   });
@@ -1088,7 +1089,7 @@ export async function processAutoSelectStocksUS(
 
   // 동시 실행 방어
   if (mode === 'refill') {
-    const freshStrategyConfig = getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
+    const freshStrategyConfig = store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
     if (freshStrategyConfig) {
       const freshTickers = extractTickerConfigsV2(freshStrategyConfig as unknown as Record<string, unknown>);
       const freshAutoCount = freshTickers.filter(t => t.autoSelected && t.market === 'overseas').length;
@@ -1100,8 +1101,8 @@ export async function processAutoSelectStocksUS(
   }
 
   // config 저장
-  const currentConfig = getMarketStrategyConfig<Record<string, unknown>>('overseas', 'realtimeDdsobV2') || {};
-  setMarketStrategyConfig('overseas', 'realtimeDdsobV2', {
+  const currentConfig = store.getStrategyConfig<Record<string, unknown>>('overseas', 'realtimeDdsobV2') || {};
+  store.setStrategyConfig('overseas', 'realtimeDdsobV2', {
     ...currentConfig,
     tickers: updatedTickers,
   });
@@ -1337,7 +1338,7 @@ export async function processAutoSelectStocksV2_1US(
 
   // 동시 실행 방어
   if (mode === 'refill') {
-    const freshConfig = getMarketStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1');
+    const freshConfig = store.getStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1');
     if (freshConfig) {
       const freshTickers = extractTickerConfigsV2(freshConfig as unknown as Record<string, unknown>);
       const freshAutoCount = freshTickers.filter(t => t.autoSelected && t.market === 'overseas').length;
@@ -1349,8 +1350,8 @@ export async function processAutoSelectStocksV2_1US(
   }
 
   // config 저장
-  const currentConfig = getMarketStrategyConfig<Record<string, unknown>>('overseas', 'realtimeDdsobV2_1') || {};
-  setMarketStrategyConfig('overseas', 'realtimeDdsobV2_1', {
+  const currentConfig = store.getStrategyConfig<Record<string, unknown>>('overseas', 'realtimeDdsobV2_1') || {};
+  store.setStrategyConfig('overseas', 'realtimeDdsobV2_1', {
     ...currentConfig,
     tickers: updatedTickers,
   });
@@ -1620,42 +1621,48 @@ export async function processAutoSelectEOD(
   const hasAutoSelected = eodTickers.some(t => t.autoSelected);
   if (hasAutoSelected) {
     const remainingTickers = allTickers.filter(t => !(t.autoSelected && t.market === market));
-    const currentConfig = getMarketStrategyConfig<Record<string, unknown>>(market, strategyId) || {};
-    setMarketStrategyConfig(market, strategyId, {
+    const currentConfig = store.getStrategyConfig<Record<string, unknown>>(market, strategyId) || {};
+    store.setStrategyConfig(market, strategyId, {
       ...currentConfig,
       tickers: remainingTickers,
     });
   }
 
-  // Telegram 알림
+  // Telegram 알림: 오늘 하루 전체 결과 (장중 완료 사이클 + 장마감 청산)
   const confirmedResults = eodResults.filter(r => !r.pending);
   const pendingResults = eodResults.filter(r => r.pending);
 
-  if (chatId && eodResults.length > 0) {
-    const formatLine = (r: { ticker: string; name: string; soldQty: number; profit: number }) =>
-      `  ${r.name}: ${r.soldQty}주 매도, 수익 ${r.profit >= 0 ? '+' : ''}${Math.round(r.profit).toLocaleString()}${currencyUnit}`;
-    const formatPendingLine = (r: { ticker: string; name: string; soldQty: number }) =>
-      `  ${r.name}: ${r.soldQty}주 매도 접수 (체결 대기)`;
+  if (chatId) {
+    const todayDateStr = new Date().toISOString().slice(0, 10);
+    const todayCycles = store.getCycleHistory<any>(todayDateStr, strategyId);
+    const todayCompletedCycles = todayCycles.filter((c: any) => c.market === market);
 
-    let msg = `🏁 <b>장마감 강제 청산 (${tag})</b>\n\n`;
+    const intradayProfit = todayCompletedCycles.reduce((sum: number, c: any) => sum + (c.totalRealizedProfit || 0), 0);
+    const eodProfit = confirmedResults.reduce((sum, r) => sum + r.profit, 0);
+    const totalDayProfit = intradayProfit + eodProfit;
+    const intradayCount = todayCompletedCycles.length;
+    const eodCount = confirmedResults.length;
+    const pendingCount = pendingResults.length;
+    const fmtProfit = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v).toLocaleString()}${currencyUnit}`;
 
-    if (confirmedResults.length > 0) {
-      const autoConfirmed = confirmedResults.filter(r => r.isAutoSelected);
-      const manualConfirmed = confirmedResults.filter(r => !r.isAutoSelected);
-      if (autoConfirmed.length > 0) msg += `📋 자동추천 종목:\n${autoConfirmed.map(formatLine).join('\n')}\n\n`;
-      if (manualConfirmed.length > 0) msg += `📌 수동 종목:\n${manualConfirmed.map(formatLine).join('\n')}\n\n`;
+    let msg = `📊 <b>오늘의 실사오팔 결과 (${tag})</b>\n\n`;
+
+    if (intradayCount > 0) {
+      msg += `장중 완료: ${intradayCount}건 (${fmtProfit(intradayProfit)})\n`;
     }
-    if (pendingResults.length > 0) {
-      msg += `⏳ 체결 대기:\n${pendingResults.map(formatPendingLine).join('\n')}\n\n`;
+    if (eodCount > 0) {
+      msg += `장마감 청산: ${eodCount}건 (${fmtProfit(eodProfit)})\n`;
+    }
+    if (pendingCount > 0) {
+      msg += `⏳ 체결 대기: ${pendingCount}건\n`;
     }
 
-    if (eodResults.some(r => r.isAutoSelected)) {
-      if (market === 'domestic') {
-        msg += `내일 09:10에 새 종목을 선별합니다.`;
-      } else {
-        msg += `내일 09:50 ET에 새 종목을 선별합니다.`;
-      }
+    if (intradayCount + eodCount > 0) {
+      msg += `\n<b>총 수익: ${fmtProfit(totalDayProfit)}</b>`;
+    } else {
+      msg += `오늘 거래 없음`;
     }
+
     await sendTelegramMessage(chatId, msg);
   }
 

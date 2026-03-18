@@ -639,6 +639,7 @@ async function processSwingAccount(ctx?: AccountContext): Promise<number> {
 
     // 상태 업데이트 (항상 수행)
     const update: Partial<SwingState> = {
+      stockName,
       indicators,
       readinessScore: entryResult.readinessScore,
       pullbackState: entryResult.pullbackState,
@@ -1430,6 +1431,7 @@ async function processEodScan(ctx?: AccountContext): Promise<number> {
       // 상태 업데이트
       const transition = determineCheckInterval(watchState, entryResult.readinessScore, entryResult.pullbackState);
       const update: Partial<SwingState> = {
+        stockName: tickerConfig.stockName,
         indicators,
         readinessScore: entryResult.readinessScore,
         pullbackState: entryResult.pullbackState,
