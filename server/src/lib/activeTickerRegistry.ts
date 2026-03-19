@@ -6,6 +6,7 @@
  */
 
 import * as localStore from './localStore';
+import { parseStateKey } from '../runners/scalp/scalpTypes';
 
 export interface ActiveTickerEntry {
   ticker: string;
@@ -36,11 +37,20 @@ function collectActive(
   marketOverride?: 'domestic' | 'overseas',
 ): void {
   const states = store.getAllStates<Record<string, unknown>>(collection);
-  for (const [ticker, s] of states) {
+  for (const [stateKey, s] of states) {
     const status = String(s.status || '');
     if (collection === 'cycles' ? status !== 'completed' : isActive(status)) {
+      // v3: momentumScalpState는 composite key "{strategyId}_{ticker}" → raw ticker 추출
+      let ticker = stateKey;
+      if (collection === 'momentumScalpState') {
+        const parsed = parseStateKey(stateKey);
+        if (parsed) ticker = parsed.ticker;
+      }
       const market = marketOverride ?? ((s.market as string) || getMarketFromTicker(ticker));
-      map.set(ticker, { ticker, strategy, market: market as 'domestic' | 'overseas', status });
+      // 같은 ticker가 여러 전략으로 잡혀 있을 수 있음 — 먼저 등록된 것 유지
+      if (!map.has(ticker)) {
+        map.set(ticker, { ticker, strategy, market: market as 'domestic' | 'overseas', status });
+      }
     }
   }
 }
@@ -60,6 +70,7 @@ function buildRegistry(): Map<string, ActiveTickerEntry> {
     collectActive(map, store, 'momentumScalpState', 'momentumScalp', 'domestic');
     collectActive(map, store, 'realtimeDdsobV2State', 'realtimeDdsobV2');
     collectActive(map, store, 'swingState', 'swing', 'domestic');
+    collectActive(map, store, 'dantaV1State', 'dantaV1', 'domestic');
     collectActive(map, store, 'cycles', 'infinite', 'overseas');
     collectActive(map, store, 'vrState', 'vr', 'overseas');
   }

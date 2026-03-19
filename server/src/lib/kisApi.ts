@@ -2066,6 +2066,54 @@ export class KisApiClient {
   }
 
   /**
+   * 해외주식 기간별 시세 (일/주/월봉)
+   * TR_ID: HHDFS76200200
+   * GUBN: 0=일봉, 1=주봉, 2=월봉 / 최대 100건/호출
+   */
+  async getOverseasDailyBars(
+    appKey: string,
+    appSecret: string,
+    accessToken: string,
+    ticker: string,
+    endDate: string,    // YYYYMMDD — 이 날짜 이전 데이터 최대 100건
+    periodCode: '0' | '1' | '2' = '0', // 0:일, 1:주, 2:월
+    exchange?: string,  // NAS/NYS/AMS — 없으면 ticker 기반 자동 판별
+  ): Promise<OverseasDailyBarResponse> {
+    const excd = exchange ?? KisApiClient.getExchangeCodeForQuote(ticker);
+
+    return this.withRetry(async () => {
+      const response = await fetch(
+        `${this.baseUrl}/uapi/overseas-price/v1/quotations/dailyprice?` +
+          new URLSearchParams({
+            AUTH: '',
+            EXCD: excd,
+            SYMB: ticker,
+            GUBN: periodCode,
+            BYMD: endDate,
+            MODP: '1', // 수정주가 반영
+          }),
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            authorization: `Bearer ${accessToken}`,
+            appkey: appKey,
+            appsecret: appSecret,
+            tr_id: 'HHDFS76200200',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Overseas daily bar request failed: ${response.status} - ${errorBody}`);
+      }
+
+      return response.json();
+    }, `OverseasDailyBars:${ticker}`);
+  }
+
+  /**
    * 국내 기간별손익일별합산조회
    * TR_ID: TTTC8708R
    * 날짜 범위의 일별 실현손익 합산 조회
@@ -2606,6 +2654,9 @@ interface CachedToken {
 // 인메모리 캐시 (프로세스 내 최우선) — 계좌별 Map
 const inMemoryTokenCache = new Map<string, CachedToken>();
 
+// 진행 중인 토큰 발급 Promise — 동시 요청 dedup (같은 키에 대해 1회만 발급)
+const inFlightTokenRequests = new Map<string, Promise<string>>();
+
 /**
  * 캐시된 토큰 가져오기 또는 새로 발급
  * 3-tier: 인메모리 → 로컬 파일 → KIS API
@@ -2652,27 +2703,42 @@ export async function getOrRefreshToken(
       }
     }
 
-    // 3. 새 토큰 발급
-    console.log(`[Token:${cacheKey}] 새 토큰 발급`);
-    const tokenResponse = await kisClient.getAccessToken(credentials.appKey, credentials.appSecret);
-    const accessToken = tokenResponse.access_token;
-
-    const cacheData: CachedToken = {
-      accessToken,
-      expiresAt: now + TOKEN_CACHE_HOURS * 60 * 60 * 1000,
-      updatedAt: new Date().toISOString(),
-      appKeyPrefix: currentKeyPrefix,
-    };
-
-    // 인메모리 + 파일 캐시 동시 저장
-    inMemoryTokenCache.set(cacheKey, cacheData);
-    if (accountStore) {
-      accountStore.setTokenCache(cacheData);
-    } else {
-      setTokenCache(cacheData);
+    // 3. 새 토큰 발급 — 동일 키에 대해 진행 중인 요청이 있으면 재사용
+    const existingFlight = inFlightTokenRequests.get(cacheKey);
+    if (existingFlight) {
+      console.log(`[Token:${cacheKey}] 진행 중인 발급 대기`);
+      return existingFlight;
     }
 
-    return accessToken;
+    console.log(`[Token:${cacheKey}] 새 토큰 발급`);
+    const fetchPromise = (async () => {
+      const tokenResponse = await kisClient.getAccessToken(credentials.appKey, credentials.appSecret);
+      const accessToken = tokenResponse.access_token;
+
+      const cacheData: CachedToken = {
+        accessToken,
+        expiresAt: Date.now() + TOKEN_CACHE_HOURS * 60 * 60 * 1000,
+        updatedAt: new Date().toISOString(),
+        appKeyPrefix: currentKeyPrefix,
+      };
+
+      // 인메모리 + 파일 캐시 동시 저장
+      inMemoryTokenCache.set(cacheKey, cacheData);
+      if (accountStore) {
+        accountStore.setTokenCache(cacheData);
+      } else {
+        setTokenCache(cacheData);
+      }
+
+      return accessToken;
+    })();
+
+    inFlightTokenRequests.set(cacheKey, fetchPromise);
+    try {
+      return await fetchPromise;
+    } finally {
+      inFlightTokenRequests.delete(cacheKey);
+    }
   } catch (err) {
     console.error('[Token] 토큰 발급/갱신 실패:', err);
     throw err;
@@ -2742,5 +2808,25 @@ export interface DomesticHolidayResponse {
     tr_day_yn: string;       // 거래일여부 (Y/N)
     opnd_yn: string;         // 개장일여부 (Y/N)
     sttl_day_yn: string;     // 결제일여부 (Y/N)
+  }>;
+}
+
+// 해외주식 기간별 시세 응답 (HHDFS76200200)
+export interface OverseasDailyBarResponse {
+  rt_cd: string;
+  msg_cd: string;
+  msg1: string;
+  output2?: Array<{
+    xymd: string;   // 날짜 (YYYYMMDD)
+    open: string;   // 시가
+    high: string;   // 고가
+    low: string;    // 저가
+    clos: string;   // 종가
+    tvol: string;   // 거래량
+    tamt: string;   // 거래대금
+    pbid: string;   // 매수호가
+    vbid: string;   // 매수잔량
+    pask: string;   // 매도호가
+    vask: string;   // 매도잔량
   }>;
 }

@@ -1,6 +1,9 @@
 /**
  * 모멘텀 스캘핑 슬롯 배분 계산기 — 로컬 버전
  * Firestore → localStore 전환
+ *
+ * v3: strategyId 기반 composite key 지원 추가
+ *     상태 키: "{strategyId}_{ticker}" (하위 호환: 기존 "{ticker}" 키도 읽기 가능)
  */
 
 import { KisApiClient } from './kisApi';
@@ -8,6 +11,13 @@ import { isKRMarketOpen } from './marketUtils';
 import { getUserTelegramChatId, sendTelegramMessage } from './telegram';
 import * as localStore from './localStore';
 import { type AccountStore } from './localStore';
+import {
+  type StrategyId,
+  type MomentumScalpStateV3,
+  type StrategySlotConfig,
+  makeStateKey,
+  parseStateKey,
+} from '../runners/scalp/scalpTypes';
 
 // ========================================
 // 타입 정의
@@ -261,4 +271,279 @@ async function sendSlotRefillAlert(title: string, detail: string): Promise<void>
   } catch (err) {
     console.error('[MomentumScalp] 텔레그램 알림 발송 실패:', err);
   }
+}
+
+// ========================================
+// v3: 전략별 독립 슬롯 관리
+// ========================================
+
+/**
+ * 특정 전략의 점유 상태키 목록 반환
+ * 키 형식: "{strategyId}_{ticker}"
+ */
+export function getOccupiedStateKeysByStrategy(
+  strategyId: StrategyId, store?: AccountStore,
+): string[] {
+  const all = (store ?? localStore).getAllStates<MomentumScalpStateV3>(STATE_COLLECTION);
+  const result: string[] = [];
+  for (const [key, s] of all) {
+    if (!['active', 'pending_buy', 'pending_sell'].includes(s.status)) continue;
+    const parsed = parseStateKey(key);
+    if (parsed && parsed.strategyId === strategyId) {
+      result.push(key);
+    }
+  }
+  return result;
+}
+
+/**
+ * 특정 전략의 점유 ticker 목록 (raw ticker)
+ */
+export function getOccupiedTickersByStrategy(
+  strategyId: StrategyId, store?: AccountStore,
+): string[] {
+  return getOccupiedStateKeysByStrategy(strategyId, store).map(key => {
+    const parsed = parseStateKey(key);
+    return parsed ? parsed.ticker : key;
+  });
+}
+
+/**
+ * 전 전략 통합 점유 ticker Set (타 전략 중복 체크용)
+ * momentumScalp 내 모든 전략의 활성 종목을 반환
+ */
+export function getAllScalpOccupiedTickers(store?: AccountStore): Set<string> {
+  const all = (store ?? localStore).getAllStates<MomentumScalpStateV3>(STATE_COLLECTION);
+  const result = new Set<string>();
+  for (const [key, s] of all) {
+    if (!['active', 'pending_buy', 'pending_sell'].includes(s.status)) continue;
+    const parsed = parseStateKey(key);
+    result.add(parsed ? parsed.ticker : key);
+  }
+  return result;
+}
+
+/**
+ * v3 전략별 슬롯 여유 계산 (shadow 독립 — 전략별 가상 계정)
+ * shadow에서는 예수금 무제한, 슬롯만 전략별 maxSlots 기준 체크
+ */
+export function calculateStrategySlotAvailability(
+  strategyId: StrategyId,
+  strategyConfig: StrategySlotConfig,
+  globalAmountPerStock: number,
+  isShadow: boolean,
+  store?: AccountStore,
+): { fillable: boolean; occupiedCount: number; maxSlots: number; amountPerSlot: number } {
+  const occupiedKeys = getOccupiedStateKeysByStrategy(strategyId, store);
+  const occupiedCount = occupiedKeys.length;
+  const maxSlots = strategyConfig.maxSlots;
+  const amountPerSlot = strategyConfig.amountPerStock ?? globalAmountPerStock;
+
+  if (occupiedCount >= maxSlots) {
+    return { fillable: false, occupiedCount, maxSlots, amountPerSlot };
+  }
+
+  // shadow에서는 항상 진입 가능 (가상 자본)
+  return { fillable: true, occupiedCount, maxSlots, amountPerSlot };
+}
+
+/**
+ * v3 상태 생성 — composite key "{strategyId}_{ticker}"
+ */
+export function createMomentumScalpStateV3(
+  strategyId: StrategyId,
+  strategyVersion: string,
+  ticker: string,
+  stockName: string,
+  allocatedAmount: number,
+  pendingOrderNo: string | null,
+  entryConditions?: {
+    entryBoxPos: number | null;
+    boxRangePct: number | null;
+    spreadTicks: number | null;
+    targetTicks: number | null;
+  },
+  entryMeta?: Record<string, unknown> | null,
+  extraFields?: {
+    candidateRank?: number | null;
+    signalMinuteBucket?: string | null;
+    fillModel?: string | null;
+  },
+  store?: AccountStore,
+  shadowPendingAt?: string | null,
+): void {
+  const stateKey = makeStateKey(strategyId, ticker);
+  (store ?? localStore).setState(STATE_COLLECTION, stateKey, {
+    ticker,
+    stockName,
+    market: 'domestic',
+    status: 'pending_buy',
+    strategyId,
+    strategyVersion,
+    entryPrice: null,
+    entryQuantity: null,
+    targetPrice: null,
+    stopLossPrice: null,
+    allocatedAmount,
+    pendingOrderNo,
+    enteredAt: null,
+    updatedAt: new Date().toISOString(),
+    sellOrderNo: null,
+    sellExitReason: null,
+    entryBoxPos: entryConditions?.entryBoxPos ?? null,
+    boxRangePct: entryConditions?.boxRangePct ?? null,
+    spreadTicks: entryConditions?.spreadTicks ?? null,
+    targetTicks: entryConditions?.targetTicks ?? null,
+    bestBidAtExit: null,
+    shadowPendingAt: shadowPendingAt ?? null,
+    bestProfitPct: null,
+    mfe30GateChecked: false,
+    mfe60Pct: null,
+    mfe120Pct: null,
+    mfe60Checked: false,
+    mfe120Checked: false,
+    positiveScore: null,
+    positiveScoreDetails: null,
+    entryMeta: entryMeta ?? null,
+    candidateRank: extraFields?.candidateRank ?? null,
+    signalMinuteBucket: extraFields?.signalMinuteBucket ?? null,
+    fillModel: (extraFields?.fillModel as MomentumScalpStateV3['fillModel']) ?? null,
+  } satisfies MomentumScalpStateV3);
+}
+
+/**
+ * v3 상태 → active 전환
+ */
+export function updateScalpStateToActiveV3(
+  strategyId: StrategyId,
+  ticker: string,
+  entryPrice: number,
+  entryQuantity: number,
+  targetPrice: number | null,
+  stopLossPrice: number | null,
+  fillModel?: string | null,
+  store?: AccountStore,
+): void {
+  const stateKey = makeStateKey(strategyId, ticker);
+  (store ?? localStore).updateState(STATE_COLLECTION, stateKey, {
+    status: 'active',
+    entryPrice,
+    entryQuantity,
+    targetPrice,
+    stopLossPrice,
+    pendingOrderNo: null,
+    enteredAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    shadowPendingAt: null,
+    bestProfitPct: 0,
+    mfe30GateChecked: false,
+    mfe60Pct: null,
+    mfe120Pct: null,
+    mfe60Checked: false,
+    mfe120Checked: false,
+    fillModel: fillModel ?? null,
+  });
+}
+
+/**
+ * v3 상태 삭제
+ */
+export function deleteScalpStateV3(
+  strategyId: StrategyId, ticker: string, store?: AccountStore,
+): void {
+  const stateKey = makeStateKey(strategyId, ticker);
+  (store ?? localStore).deleteState(STATE_COLLECTION, stateKey);
+}
+
+/**
+ * v3 상태 조회
+ */
+export function getScalpStateV3(
+  strategyId: StrategyId, ticker: string, store?: AccountStore,
+): MomentumScalpStateV3 | null {
+  const stateKey = makeStateKey(strategyId, ticker);
+  return (store ?? localStore).getState<MomentumScalpStateV3>(STATE_COLLECTION, stateKey);
+}
+
+/**
+ * v3 상태 → pending_sell 전환
+ */
+export function updateScalpStateToPendingSellV3(
+  strategyId: StrategyId,
+  ticker: string,
+  sellOrderNo: string,
+  sellExitReason: 'target' | 'stop_loss' | 'timeout' | 'market_close_auction' | 'no_follow_through_30s',
+  bestBidAtExit?: number | null,
+  store?: AccountStore,
+): void {
+  const stateKey = makeStateKey(strategyId, ticker);
+  (store ?? localStore).updateState(STATE_COLLECTION, stateKey, {
+    status: 'pending_sell',
+    sellOrderNo,
+    sellExitReason,
+    bestBidAtExit: bestBidAtExit ?? null,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * v3 상태 → active 복귀 (pending_sell 실패 시)
+ */
+export function revertScalpStateToActiveV3(
+  strategyId: StrategyId, ticker: string, store?: AccountStore,
+): void {
+  const stateKey = makeStateKey(strategyId, ticker);
+  (store ?? localStore).updateState(STATE_COLLECTION, stateKey, {
+    status: 'active',
+    sellOrderNo: null,
+    sellExitReason: null,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * v3 전체 상태 순회 — sell loop에서 사용
+ * 모든 momentumScalpState를 순회하며 v3 필드 포함 반환
+ */
+export function getAllScalpStatesV3(store?: AccountStore): Map<string, MomentumScalpStateV3> {
+  const all = (store ?? localStore).getAllStates<MomentumScalpStateV3>(STATE_COLLECTION);
+  // 하위 호환: strategyId 없는 기존 상태에 기본값 부여
+  for (const [, state] of all) {
+    if (!state.strategyId) {
+      state.strategyId = 'box_rebound_control';
+      state.strategyVersion = '0.0';
+    }
+    if (state.entryMeta === undefined) state.entryMeta = null;
+    if (state.mfe60Pct === undefined) state.mfe60Pct = null;
+    if (state.mfe120Pct === undefined) state.mfe120Pct = null;
+    if (state.mfe60Checked === undefined) state.mfe60Checked = false;
+    if (state.mfe120Checked === undefined) state.mfe120Checked = false;
+    if (state.candidateRank === undefined) (state as any).candidateRank = null;
+    if (state.signalMinuteBucket === undefined) (state as any).signalMinuteBucket = null;
+    if (state.fillModel === undefined) (state as any).fillModel = null;
+  }
+  return all;
+}
+
+/**
+ * v3 MFE60/MFE120 업데이트 (sell loop에서 시점별 기록)
+ */
+export function updateScalpStateMFE(
+  strategyId: StrategyId,
+  ticker: string,
+  updates: {
+    bestProfitPct?: number;
+    mfe60Pct?: number;
+    mfe60Checked?: boolean;
+    mfe120Pct?: number;
+    mfe120Checked?: boolean;
+    mfe30GateChecked?: boolean;
+  },
+  store?: AccountStore,
+): void {
+  const stateKey = makeStateKey(strategyId, ticker);
+  (store ?? localStore).updateState(STATE_COLLECTION, stateKey, {
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  });
 }

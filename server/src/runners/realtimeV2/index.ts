@@ -20,6 +20,7 @@ import {
   getKRMarketHolidayName,
   getKSTCurrentMinute,
   getETCurrentMinute,
+  getKSTDateString,
 } from '../../lib/marketUtils';
 import {
   type RealtimeDdsobV2Config,
@@ -147,12 +148,17 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
     }
 
     // ======== 1. EOD 일괄 처리 (autoSelected/forceLiquidateAtClose) ========
-    if (isUSEODTime && eodTickers.length > 0) {
-      try {
-        const eodStrategyId: AccountStrategy = isV2_1Active ? 'realtimeDdsobV2_1' : 'realtimeDdsobV2';
-        await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'overseas', eodStrategyId, ctx);
-      } catch (err) {
-        console.error(`[RealtimeDdsobV2:US] EOD error ${userId}/${accountId}:`, err);
+    if (isUSEODTime && eodTickers.length > 0 && isActiveStrategy) {
+      const eodFlagKey = `us_${getKSTDateString()}`;
+      const eodAlreadyDone = store.getState<{ done: boolean }>('realtimeV2EodLog', eodFlagKey);
+      if (!eodAlreadyDone?.done) {
+        store.setState('realtimeV2EodLog', eodFlagKey, { done: true });
+        try {
+          const eodStrategyId: AccountStrategy = isV2_1Active ? 'realtimeDdsobV2_1' : 'realtimeDdsobV2';
+          await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'overseas', eodStrategyId, ctx);
+        } catch (err) {
+          console.error(`[RealtimeDdsobV2:US] EOD error ${userId}/${accountId}:`, err);
+        }
       }
     }
 
@@ -368,11 +374,16 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
     }
 
     // ======== 1. EOD 일괄 처리 (autoSelected/forceLiquidateAtClose) ========
-    if (isEODTime && eodTickers.length > 0) {
-      try {
-        await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'domestic', 'realtimeDdsobV2', ctx);
-      } catch (err) {
-        console.error(`[RealtimeDdsobV2:KR] EOD error ${userId}/${accountId}:`, err);
+    if (isEODTime && eodTickers.length > 0 && isActiveStrategy) {
+      const eodFlagKey = `kr_${getKSTDateString()}`;
+      const eodAlreadyDone = store.getState<{ done: boolean }>('realtimeV2EodLog', eodFlagKey);
+      if (!eodAlreadyDone?.done) {
+        store.setState('realtimeV2EodLog', eodFlagKey, { done: true });
+        try {
+          await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'domestic', 'realtimeDdsobV2', ctx);
+        } catch (err) {
+          console.error(`[RealtimeDdsobV2:KR] EOD error ${userId}/${accountId}:`, err);
+        }
       }
     }
 

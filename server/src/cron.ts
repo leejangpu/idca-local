@@ -4,13 +4,14 @@
  */
 
 import cron from 'node-cron';
-import { runMomentumScalpBuyKR, runMomentumScalpSellKR } from './runners/momentumScalp';
+import { runMomentumScalpBuyKR, runMomentumScalpSellKR } from './runners/scalp/scalpEngine';
 import { runMarketCloseKR, runMarketCloseUS } from './runners/marketClose';
 import { runDailyTrading } from './runners/trading';
 import { runMorningSnapshot } from './runners/morning';
 import { runRealtimeV2KR, runRealtimeV2US } from './runners/realtimeV2';
 import { runSwingTradingLoop, runEodSetupScan, submitPendingOrders, checkPendingFills, cancelUnfilledOrders } from './runners/swingTrading';
 import { runMonthlyMaCrossover } from './runners/monthlyMaCrossover';
+import { startDantaWorker } from './runners/danta/dantaScheduler';
 import { getEnabledAccounts, AccountContext } from './lib/accountContext';
 import type { SwingConfig } from './lib/swingCalculator';
 
@@ -44,6 +45,14 @@ export function registerAllCrons(): void {
   cron.schedule('*/1 9-15 * * 1-5', () => {
     forEachAccount('ScalpSell', ctx => runMomentumScalpSellKR(ctx));
   }, { timezone: 'Asia/Seoul' });
+
+  // 단타 v1 — 상시 실행 워커 (서버 시작 시 즉시 기동, 장 시간 자동 감지)
+  {
+    const accounts = getEnabledAccounts();
+    for (const ctx of accounts) {
+      startDantaWorker(ctx);
+    }
+  }
 
   // 장마감 처리 KR (KST 16:00)
   cron.schedule('0 16 * * 1-5', () => {

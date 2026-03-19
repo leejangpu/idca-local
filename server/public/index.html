@@ -601,8 +601,8 @@
       if (!strategies || strategies.length === 0) { el.innerHTML = ''; return; }
       el.innerHTML = `<div class="section-label" style="margin-top:4px">전략 상세 설정</div>` +
         strategies.map(s => {
-          const data = C.strategies?.[market]?.[s];
-          if (!data) return '';
+          const data = C.strategies?.[market]?.[s] ?? {};
+          if (!data || (Object.keys(data).length === 0 && s !== 'dantaV1')) return '';
           const label = STRAT_LABELS[s] || s;
           const isOpen = openPanels.has(market + ':' + s);
           return `
@@ -634,7 +634,8 @@
       realtimeDdsobV2_1: '실사오팔 v2.1',
       infinite: '무한매수법',
       vr: 'VR 리밸런싱',
-      swing: '스윙매매'
+      swing: '스윙매매',
+      dantaV1: '단타 v1'
     };
 
     function strategyCheckboxes(market, allOptions, activeList) {
@@ -660,7 +661,7 @@
     }
 
     function renderDomestic(mc) {
-      const options = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실사오팔 v2'],['swing','스윙매매']];
+      const options = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실사오팔 v2'],['swing','스윙매매'],['dantaV1','단타 v1']];
       const activeList = mc.strategies || (mc.strategy ? [mc.strategy] : []);
       if (mc.swingEnabled && !activeList.includes('swing')) activeList.push('swing');
       return `
@@ -686,6 +687,7 @@
     function renderStrategyContent(market, strategy, data) {
       if (strategy === 'swing') return renderSwing(data, market);
       if (strategy === 'momentumScalp') return renderMomentumScalp(data, market);
+      if (strategy === 'dantaV1') return renderDantaV1(data, market);
       if (strategy === 'vr') return renderVR(data, market);
       if (strategy === 'infinite') return renderInfinite(data, market);
       if (strategy.startsWith('realtimeDdsobV2')) {
@@ -737,6 +739,119 @@
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','momentumScalp')">저장</button>
         </div>
       `;
+    }
+
+    // -- Danta V1 --
+    function renderDantaV1(d, market) {
+      const st = (activeStrategyTab === 'config' || activeStrategyTab === 'status') ? activeStrategyTab : 'config';
+      return `
+        <div class="subtabs">
+          <button class="subtab ${st==='config'?'active':''}" onclick="activeStrategyTab='config';renderStrategyDetail('${market}','dantaV1')">설정</button>
+          <button class="subtab ${st==='status'?'active':''}" onclick="activeStrategyTab='status';renderStrategyDetail('${market}','dantaV1')">상태</button>
+        </div>
+        ${st === 'config' ? renderDantaV1Config(d, market) : renderDantaV1Status(market)}
+      `;
+    }
+
+    function renderDantaV1Config(d, market) {
+      return `
+        <div class="card">
+          ${toggleRow('활성화', '', d.enabled, `onStratField('${market}','dantaV1','enabled',this.checked)`)}
+          ${toggleRow('쉐도우 모드', '실제 주문 없이 가상 체결 시뮬레이션', d.shadowMode !== false, `onStratField('${market}','dantaV1','shadowMode',this.checked)`)}
+        </div>
+        <div class="card">
+          <div class="card-header">HTS 조건검색</div>
+          ${conditionPickerRow(d.conditionSeq, d.conditionName, `function(el){
+            if(!el.value)return;
+            var parts=el.value.split('|');
+            onStratField('${market}','dantaV1','conditionSeq',parts[0]);
+            onStratField('${market}','dantaV1','conditionName',parts[1]);
+          }`)}
+        </div>
+        <div class="card">
+          <div class="card-header">투자 설정</div>
+          ${numberRow('종목당 금액', '종목 1개당 투입 금액', d.amountPerStock || 500000, `onStratFieldNum('${market}','dantaV1','amountPerStock',this.value)`, '원')}
+          ${numberRow('동시 보유', '최대 동시 보유 종목 수', d.maxSlots || 1, `onStratFieldNum('${market}','dantaV1','maxSlots',this.value)`, '종목')}
+        </div>
+        <div class="save-bar">
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','dantaV1')">저장</button>
+        </div>
+      `;
+    }
+
+    async function renderDantaV1Status(market) {
+      const el = document.getElementById('strategy-detail');
+      if (!el) return '';
+
+      try {
+        const resp = await fetch(apiBase + '/status/danta');
+        const data = await resp.json();
+
+        let html = '';
+        for (const acct of data) {
+          const w = acct.worker || {};
+          const positions = acct.positions || [];
+          const candidates = acct.candidates || [];
+          const m = acct.metrics || {};
+
+          html += `
+            <div class="card">
+              <div class="card-header">${acct.nickname || acct.accountId} — 워커 상태</div>
+              <div class="row"><div class="row-label">실행 중</div><div class="row-right">${w.running ? '<span style="color:var(--green)">ON</span>' : '<span style="color:var(--text3)">OFF</span>'}</div></div>
+              <div class="row"><div class="row-label">루프 활성</div><div class="row-right">${w.loopsActive ? '<span style="color:var(--green)">ON</span>' : '<span style="color:var(--text3)">OFF</span>'}</div></div>
+              <div class="row"><div class="row-label">후보 수</div><div class="row-right">${w.candidateCount ?? 0}개</div></div>
+            </div>
+            <div class="card">
+              <div class="card-header">오늘 지표</div>
+              <div class="row"><div class="row-label">진입</div><div class="row-right">${m.entries ?? 0}건</div></div>
+              <div class="row"><div class="row-label">청산</div><div class="row-right">${m.exits ?? 0}건</div></div>
+              <div class="row"><div class="row-label">fallback</div><div class="row-right">${m.fallbacks ?? 0}회</div></div>
+              <div class="row"><div class="row-label">에러</div><div class="row-right">${m.errors ?? 0}건</div></div>
+            </div>`;
+
+          if (positions.length > 0) {
+            html += `<div class="card"><div class="card-header">보유 포지션</div>`;
+            for (const p of positions) {
+              const pnl = p.entryPrice ? ((p.lastPrice || p.entryPrice) - p.entryPrice) / p.entryPrice * 100 : 0;
+              html += `
+                <div class="row">
+                  <div class="row-left">
+                    <div class="row-label" style="font-weight:700">${p.ticker} <span style="font-weight:400;color:var(--text2)">${p.stockName || ''}</span></div>
+                    <div class="row-desc">진입 ${p.entryPrice?.toLocaleString()}원 x ${p.entryQuantity}주 | ${p.status} | ${p.shadowMode ? 'shadow' : 'real'}</div>
+                  </div>
+                  <div class="row-right" style="color:${pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</div>
+                </div>`;
+            }
+            html += `</div>`;
+          }
+
+          if (candidates.length > 0) {
+            const phaseColors = { NEW_CANDIDATE: 'var(--text3)', WAIT_PULLBACK: 'var(--yellow)', READY_TO_BREAKOUT: 'var(--green)' };
+            html += `<div class="card"><div class="card-header">후보 풀 (${candidates.length})</div>`;
+            for (const c of candidates.slice(0, 15)) {
+              html += `
+                <div class="row">
+                  <div class="row-left">
+                    <div class="row-label">${c.ticker} <span style="color:var(--text2)">${c.stockName}</span></div>
+                    <div class="row-desc">trigger=${c.triggerHigh || '-'} pullback=${c.pullbackLow || '-'} 현재=${c.lastPrice} ${c.ageSec}초</div>
+                  </div>
+                  <div class="row-right"><span style="color:${phaseColors[c.phase] || 'var(--text3)'};font-size:0.82em">${c.phase}</span></div>
+                </div>`;
+            }
+            if (candidates.length > 15) html += `<div class="row"><div class="row-label" style="color:var(--text3)">... +${candidates.length - 15}개</div></div>`;
+            html += `</div>`;
+          }
+        }
+
+        if (data.length === 0) {
+          html = `<div class="card"><div class="row"><div class="row-label" style="color:var(--text3)">활성 계좌 없음 — 전략을 활성화하세요</div></div></div>`;
+        }
+
+        el.innerHTML = html;
+      } catch (err) {
+        el.innerHTML = `<div class="card"><div class="row"><div class="row-label" style="color:var(--red)">상태 조회 실패: ${err.message}</div></div></div>`;
+      }
+      return '';
     }
 
     // -- VR --

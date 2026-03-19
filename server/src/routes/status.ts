@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as localStore from '../lib/localStore';
 import { config } from '../config';
+import { getDantaWorkerStatus, getCandidatePool, getMetricsSnapshot } from '../runners/danta';
 
 export const statusRoutes = Router();
 
@@ -72,6 +73,52 @@ statusRoutes.get('/swing', (_req, res) => {
   res.json(flatStates('swingState'));
 });
 
+// 단타 v1 상태
+statusRoutes.get('/danta', (req, res) => {
+  const accountId = req.query.accountId as string | undefined;
+  const registry = localStore.getAccountRegistry();
+  const results: Array<Record<string, unknown>> = [];
+
+  for (const account of registry.accounts) {
+    if (accountId && account.id !== accountId) continue;
+    const store = localStore.forAccount(account.id);
+    const positions = store.getAllStates<Record<string, unknown>>('dantaV1State');
+    const workerStatus = getDantaWorkerStatus(account.id);
+    const pool = getCandidatePool(account.id);
+    const metrics = getMetricsSnapshot(account.id);
+
+    // 후보 요약
+    const candidates = Array.from(pool.values()).map(c => ({
+      ticker: c.ticker,
+      stockName: c.stockName,
+      phase: c.phase,
+      triggerHigh: c.triggerHigh,
+      pullbackLow: c.pullbackLow,
+      lastPrice: c.lastPrice,
+      tradeAmt: c.tradeAmt,
+      ageSec: Math.round((Date.now() - c.discoveredAt) / 1000),
+    }));
+
+    results.push({
+      accountId: account.id,
+      nickname: account.nickname,
+      worker: workerStatus,
+      positions: Array.from(positions.entries()).map(([ticker, data]) => ({ ticker, ...data })),
+      candidates,
+      metrics: {
+        date: metrics.date,
+        entries: metrics.counters['entry.success'] ?? 0,
+        exits: (metrics.counters['exit.target'] ?? 0) + (metrics.counters['exit.stop_loss'] ?? 0)
+          + (metrics.counters['exit.time_stop'] ?? 0) + (metrics.counters['exit.market_close'] ?? 0),
+        errors: metrics.counters['sys.error'] ?? 0,
+        fallbacks: metrics.counters['sys.fallback.event'] ?? 0,
+      },
+    });
+  }
+
+  res.json(results);
+});
+
 // 전체 요약 (대시보드용)
 statusRoutes.get('/summary', (_req, res) => {
   const trading = localStore.getTradingConfig<Record<string, unknown>>();
@@ -84,6 +131,7 @@ statusRoutes.get('/summary', (_req, res) => {
       realtimeDdsobV2: flatStates('realtimeDdsobV2State').length,
       momentumScalp: flatStates('momentumScalpState').length,
       swing: flatStates('swingState').length,
+      dantaV1: flatStates('dantaV1State').length,
     },
   });
 });

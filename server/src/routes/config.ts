@@ -60,6 +60,7 @@ configRoutes.get('/account/:accountId', (req, res) => {
       momentumScalp: store.getStrategyConfig('domestic', 'momentumScalp'),
       realtimeDdsobV2: store.getStrategyConfig('domestic', 'realtimeDdsobV2'),
       swing: store.getStrategyConfig('domestic', 'swing'),
+      dantaV1: store.getStrategyConfig('domestic', 'dantaV1'),
     },
     overseas: {
       infinite: store.getStrategyConfig('overseas', 'infinite'),
@@ -149,6 +150,7 @@ configRoutes.get('/', (_req, res) => {
         momentumScalp: domesticMomentumScalp,
         realtimeDdsobV2: domesticRealtimeDdsobV2,
         swing: domesticSwing,
+        dantaV1: localStore.getStrategyConfig('domestic', 'dantaV1'),
       },
       overseas: {
         infinite: overseasInfinite,
