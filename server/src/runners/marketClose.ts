@@ -32,7 +32,7 @@ interface RealtimeDdsobV2TickerConfig {
   autoStopLoss?: boolean;
   stopLossPercent?: number;
   exhaustionStopLoss?: boolean;
-  stopLossMultiplier?: number;
+  exhaustionStopLossPercent?: number;
   forceLiquidateAtClose?: boolean;
   minDropPercent?: number;
   peakCheckCandles?: number;

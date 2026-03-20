@@ -35,7 +35,7 @@ import { executeBuy, executeSell } from './dantaExecution';
 import { canOpenPosition, recordEntry, onPositionClosed, isOnCooldown } from './dantaRisk';
 import { logConditionResult, logCandidatePhaseChange, logEntryDetail, logExitDetail, logError } from './dantaLogger';
 import { priceUpTicks } from './tickSize';
-import { type MarketDataProvider } from './dantaMarketData';
+import { type MarketDataProvider, getProvider, setProvider } from '../../lib/marketDataProvider';
 import { inc, record, M } from './dantaMetrics';
 
 const TAG = '[DantaV1:Engine]';
@@ -101,15 +101,13 @@ export function getCandidatePool(accountId: string): Map<string, DantaCandidate>
   return candidatePools.get(accountId)!;
 }
 
-// MarketDataProvider 레퍼런스 (계좌별)
-const providers = new Map<string, MarketDataProvider>();
-
+// MarketDataProvider: 공유 레지스트리로 위임
 export function setMarketDataProvider(accountId: string, provider: MarketDataProvider): void {
-  providers.set(accountId, provider);
+  setProvider(accountId, provider);
 }
 
 export function getMarketDataProvider(accountId: string): MarketDataProvider | undefined {
-  return providers.get(accountId);
+  return getProvider(accountId);
 }
 
 // 토큰 캐시 (REST 호출용 — 조건검색, 분봉 등 WebSocket 미지원 API)
@@ -142,7 +140,7 @@ function getKSTTime(): Date {
 
 export async function candidatePollerTick(ctx: AccountContext, config: DantaV1Config): Promise<void> {
   const pool = getCandidatePool(ctx.accountId);
-  const provider = providers.get(ctx.accountId);
+  const provider = getProvider(ctx.accountId);
   const kstMinute = getKSTMinute();
   const aid = ctx.accountId;
 
@@ -299,7 +297,7 @@ export async function entryMonitorTick(ctx: AccountContext, config: DantaV1Confi
   const pool = getCandidatePool(ctx.accountId);
   if (pool.size === 0) return;
 
-  const provider = providers.get(ctx.accountId);
+  const provider = getProvider(ctx.accountId);
   const kstMinute = getKSTMinute();
   const todayStr = getKSTDateString();
   const aid = ctx.accountId;
@@ -539,7 +537,7 @@ export async function positionMonitorTick(ctx: AccountContext, config: DantaV1Co
   const positions = ctx.store.getAllStates<DantaV1State>(DANTA_STATE_COLLECTION);
   if (positions.size === 0) return;
 
-  const provider = providers.get(ctx.accountId);
+  const provider = getProvider(ctx.accountId);
   const kstMinute = getKSTMinute();
   const todayStr = getKSTDateString();
   const now = Date.now();

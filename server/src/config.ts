@@ -46,6 +46,6 @@ export const config = {
   userId: optionalEnv('USER_ID', 'default_user'),
   accountId: optionalEnv('ACCOUNT_ID', 'default_account'),
 
-  // 데이터 경로
-  dataDir: path.resolve(__dirname, '../data'),
+  // 데이터 경로 — 프로젝트 루트/data (server/ 밖)
+  dataDir: path.resolve(optionalEnv('DATA_DIR', path.resolve(__dirname, '../../data'))),
 } as const;

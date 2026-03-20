@@ -1,20 +1,22 @@
 /**
- * Quick Scalp v3 — 전략 레지스트리
+ * Quick Scalp v3.1 — 전략 레지스트리 (4-Strategy Parallel)
  */
 
 import { type ScalpStrategy } from './strategyInterface';
 import { type StrategyId } from '../scalpTypes';
 import { trendPullbackResume } from './trendPullbackResume';
-import { openingRangeBreakout } from './openingRangeBreakout';
-import { boxReboundControl } from './boxReboundControl';
+import { compressionPop } from './compressionPop';
+import { flushReclaim } from './flushReclaim';
+import { openingRangeBreakRetest } from './openingRangeBreakRetest';
 
 export { type ScalpStrategy } from './strategyInterface';
 
 /** 전략 ID → 구현체 맵 */
 const strategyMap: Record<StrategyId, ScalpStrategy> = {
   trend_pullback_resume: trendPullbackResume,
-  opening_range_breakout: openingRangeBreakout,
-  box_rebound_control: boxReboundControl,
+  compression_pop: compressionPop,
+  flush_reclaim: flushReclaim,
+  opening_range_break_retest: openingRangeBreakRetest,
 };
 
 /** 전체 전략 목록 반환 */

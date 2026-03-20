@@ -12,6 +12,7 @@ import { accountRoutes } from './routes/accounts';
 import { configRoutes } from './routes/config';
 import { statusRoutes } from './routes/status';
 import { startTelegramPolling } from './telegram/poller';
+import { stockAlertRoutes } from './routes/stockAlert';
 
 const app = express();
 
@@ -34,6 +35,9 @@ app.use('/config', configRoutes);
 
 // 상태 조회 API (대시보드)
 app.use('/status', statusRoutes);
+
+// 종목 알리미 API
+app.use('/stock-alerts', stockAlertRoutes);
 
 // 서버 시작
 async function start() {

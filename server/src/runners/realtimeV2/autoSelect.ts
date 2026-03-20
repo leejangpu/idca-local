@@ -63,7 +63,7 @@ interface AutoSelectConfigV2_1 {
   autoStopLoss?: boolean;
   stopLossPercent?: number;
   exhaustionStopLoss?: boolean;
-  stopLossMultiplier?: number;
+  exhaustionStopLossPercent?: number;
   minDropPercent?: number;
   peakCheckCandles?: number;
   ascendingSplit?: boolean;
@@ -814,7 +814,7 @@ export async function processAutoSelectStocks(
     autoStopLoss: autoConfig.autoStopLoss || false,
     stopLossPercent: autoConfig.stopLossPercent ?? -5,
     ...(autoConfig.exhaustionStopLoss !== undefined && { exhaustionStopLoss: autoConfig.exhaustionStopLoss }),
-    ...(autoConfig.stopLossMultiplier !== undefined && { stopLossMultiplier: autoConfig.stopLossMultiplier }),
+    ...(autoConfig.exhaustionStopLossPercent !== undefined && { exhaustionStopLossPercent: autoConfig.exhaustionStopLossPercent }),
     ...(autoConfig.minDropPercent !== undefined && { minDropPercent: autoConfig.minDropPercent }),
     ...(autoConfig.peakCheckCandles !== undefined && { peakCheckCandles: autoConfig.peakCheckCandles }),
     selectionMode: autoConfig.selectionMode,
@@ -1069,7 +1069,7 @@ export async function processAutoSelectStocksUS(
     stopLossPercent: autoConfigUS.stopLossPercent ?? -5,
     exchangeCode: s.excd,
     ...(autoConfigUS.exhaustionStopLoss !== undefined && { exhaustionStopLoss: autoConfigUS.exhaustionStopLoss }),
-    ...(autoConfigUS.stopLossMultiplier !== undefined && { stopLossMultiplier: autoConfigUS.stopLossMultiplier }),
+    ...(autoConfigUS.exhaustionStopLossPercent !== undefined && { exhaustionStopLossPercent: autoConfigUS.exhaustionStopLossPercent }),
     ...(autoConfigUS.minDropPercent !== undefined && { minDropPercent: autoConfigUS.minDropPercent }),
     ...(autoConfigUS.peakCheckCandles !== undefined && { peakCheckCandles: autoConfigUS.peakCheckCandles }),
     selectionMode: autoConfigUS.selectionMode || 'tradingAmount',
@@ -1319,7 +1319,7 @@ export async function processAutoSelectStocksV2_1US(
     stopLossPercent: autoConfig.stopLossPercent ?? -5,
     exchangeCode: s.excd,
     ...(autoConfig.exhaustionStopLoss !== undefined && { exhaustionStopLoss: autoConfig.exhaustionStopLoss }),
-    ...(autoConfig.stopLossMultiplier !== undefined && { stopLossMultiplier: autoConfig.stopLossMultiplier }),
+    ...(autoConfig.exhaustionStopLossPercent !== undefined && { exhaustionStopLossPercent: autoConfig.exhaustionStopLossPercent }),
     ...(autoConfig.minDropPercent !== undefined && { minDropPercent: autoConfig.minDropPercent }),
     ...(autoConfig.peakCheckCandles !== undefined && { peakCheckCandles: autoConfig.peakCheckCandles }),
     ...(autoConfig.ascendingSplit !== undefined && { ascendingSplit: autoConfig.ascendingSplit }),
@@ -1456,7 +1456,7 @@ export async function processAutoSelectEOD(
             autoStopLoss: state.autoStopLoss || false,
             stopLossPercent: (state.stopLossPercent as number) ?? -5,
             exhaustionStopLoss: state.exhaustionStopLoss || false,
-            stopLossMultiplier: (state.stopLossMultiplier as number) ?? 3,
+            exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
             exchangeCode: state.exchangeCode || '',
             selectionMode: state.selectionMode || '',
             conditionName: state.conditionName || '',
@@ -1583,7 +1583,7 @@ export async function processAutoSelectEOD(
           autoStopLoss: state.autoStopLoss || false,
           stopLossPercent: (state.stopLossPercent as number) ?? -5,
           exhaustionStopLoss: state.exhaustionStopLoss || false,
-          stopLossMultiplier: (state.stopLossMultiplier as number) ?? 3,
+          exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
           exchangeCode: state.exchangeCode || '',
           selectionMode: state.selectionMode || '',
           conditionName: state.conditionName || '',

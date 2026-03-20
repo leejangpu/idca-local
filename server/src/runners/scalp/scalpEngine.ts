@@ -48,6 +48,9 @@ import {
   calculateStrategySlotAvailability,
   getOccupiedStateKeysByStrategy,
   updateScalpStateMFE,
+  // v3.1
+  createArmedScalpStateV3,
+  transitionArmedToPendingBuy,
 } from '../../lib/slotAllocator';
 import { type CommonConfig, getCommonConfig, getMarketStrategyConfig, isMarketStrategyActive } from '../../lib/configHelper';
 import { getOccupiedTickersExcluding } from '../../lib/activeTickerRegistry';
@@ -71,6 +74,8 @@ import {
   writeShadowCancelLog,
   recordPriceTrail,
   clearPriceTrail,
+  writeCandidateMomentLog,
+  resetNearMissCounters,
 } from './scalpLogger';
 import { getEnabledStrategies, type ScalpStrategy } from './strategies';
 
@@ -194,7 +199,7 @@ export async function forceStopMomentumScalp(ticker: string, ctx?: AccountContex
 
       if (isShadow) {
         const todayStr = getKSTDateString();
-        if (state.entryPrice && state.entryQuantity) {
+        if (state.status !== 'armed' && state.entryPrice && state.entryQuantity) {
           store.appendLog('scalpShadowLogs', todayStr, {
             type: 'FORCE_STOP',
             ticker, stockName: state.stockName || ticker,
@@ -250,10 +255,13 @@ async function processAccountBuy(
   if (!scalpConfig || !scalpConfig.enabled) return;
   if (!scalpConfig.conditionSeq || !scalpConfig.htsUserId) return;
 
-  // v3 config 파싱 (하위 호환: strategies 필드 없으면 box_rebound_control만 활성)
+  // v3.1 config 파싱 (하위 호환: strategies 필드 없으면 4전략 기본 활성)
   const v3Config = scalpConfig as unknown as MomentumScalpConfigV3;
   const strategyConfigs: Record<string, StrategySlotConfig> = v3Config.strategies ?? {
-    box_rebound_control: { enabled: true, maxSlots: scalpConfig.slotCount },
+    trend_pullback_resume: { enabled: true, maxSlots: 3 },
+    compression_pop: { enabled: true, maxSlots: 3 },
+    flush_reclaim: { enabled: true, maxSlots: 3 },
+    opening_range_break_retest: { enabled: true, maxSlots: 2 },
   };
 
   const enabledStrategies = getEnabledStrategies(strategyConfigs as Record<StrategyId, StrategySlotConfig>);
@@ -271,6 +279,9 @@ async function processAccountBuy(
 
   if (currentMinute < BUY_START_MINUTE || currentMinute >= BUY_END_MINUTE) return;
   if (currentMinute >= LUNCH_SKIP_START && currentMinute < LUNCH_SKIP_END) return;
+
+  // v3.1: reset near_miss counters per scan cycle
+  resetNearMissCounters();
 
   await handleNewBuyV3(
     scalpConfig, v3Config, enabledStrategies,
@@ -484,6 +495,34 @@ async function handleNewBuyV3(
           const failKey = signal.reason.slice(0, 40);
           scanStats.perStrategyFails[strategy.id][failKey] =
             (scanStats.perStrategyFails[strategy.id][failKey] || 0) + 1;
+
+          // nearMiss → candidate moment 로그
+          if (signal.nearMiss) {
+            const closes = minuteBars.map(b => b.close);
+            const c3ago = closes.length >= 4 ? closes[closes.length - 4] : closes[0];
+            const cNow = closes[closes.length - 1];
+            const mom3m = c3ago > 0 ? ((cNow - c3ago) / c3ago) * 100 : null;
+
+            writeCandidateMomentLog({
+              type: 'CANDIDATE_MOMENT',
+              momentType: 'near_miss',
+              ticker: target.ticker,
+              stockName: target.name,
+              strategyId: strategy.id,
+              strategyVersion: strategy.version,
+              signalReason: signal.reason,
+              currentPrice, askPrice, bidPrice,
+              triggerLevel: signal.triggerLevel ?? null,
+              recent3mMomentumPct: mom3m !== null ? Number(mom3m.toFixed(2)) : null,
+              ema10DistancePct: (signal.entryMeta.ema10DistancePct as number) ?? null,
+              ema10Slope: (signal.entryMeta.ema10Slope as number) ?? null,
+              candidateRank: target.rank,
+              signalMinuteBucket: minuteToBucket(currentMinute),
+              armElapsedMs: null,
+              worstPriceDuringArm: null,
+              createdAt: new Date().toISOString(),
+            }, ctx);
+          }
           continue;
         }
 
@@ -503,47 +542,81 @@ async function handleNewBuyV3(
         };
 
         if (isShadow) {
-          const now = new Date().toISOString();
+          // v3.1: armed 분기 — triggerLevel 있으면 armed 상태로 생성
+          if (signal.triggerLevel != null) {
+            createArmedScalpStateV3(
+              strategy.id, strategy.version,
+              target.ticker, target.name,
+              avail.amountPerSlot,
+              signal.triggerLevel,
+              signal.triggerDirection ?? 'above',
+              signal.armDurationMs ?? 7000,
+              signal.reason,
+              entryConditions, signal.entryMeta,
+              {
+                candidateRank: target.rank, signalMinuteBucket: signalBucket,
+                fillModel: null,
+                entryPrice: buyPrice, entryQuantity: quantity,
+                targetPrice: tp, stopLossPrice: sl,
+              },
+              store as localStore.AccountStore,
+            );
 
-          createMomentumScalpStateV3(
-            strategy.id, strategy.version,
-            target.ticker, target.name,
-            avail.amountPerSlot, null,
-            entryConditions, signal.entryMeta,
-            { candidateRank: target.rank, signalMinuteBucket: signalBucket, fillModel: null },
-            store as localStore.AccountStore, now,
-          );
+            store.appendLog('scalpScanLogs', todayStr, {
+              type: 'ARMED',
+              ticker: target.ticker, stockName: target.name,
+              strategyId: strategy.id, strategyVersion: strategy.version,
+              triggerLevel: signal.triggerLevel,
+              triggerDirection: signal.triggerDirection ?? 'above',
+              armDurationMs: signal.armDurationMs ?? 7000,
+              reason: signal.reason,
+              buyPrice, quantity, tp, sl,
+              createdAt: new Date().toISOString(),
+            });
 
-          // pending_buy에 매수가/수량/TP/SL 설정
-          const pendingKey = makeStateKey(strategy.id, target.ticker);
-          (store as typeof localStore).updateState('momentumScalpState', pendingKey, {
-            entryPrice: buyPrice, entryQuantity: quantity,
-            targetPrice: tp, stopLossPrice: sl,
-          });
+            console.log(`[ScalpV3:${strategy.id}] ARMED: ${target.name}(${target.ticker}) trigger=${signal.triggerLevel} ${signal.armDurationMs ?? 7000}ms`);
+          } else {
+            // triggerLevel 없음 → 기존 동작 (즉시 pending_buy)
+            const now = new Date().toISOString();
 
-          // PENDING_ENTRY 로그
-          writeShadowPendingEntryLog({
-            ticker: target.ticker, stockName: target.name,
-            strategyId: strategy.id, strategyVersion: strategy.version,
-            entryPrice: buyPrice, entryQuantity: quantity,
-            allocatedAmount: avail.amountPerSlot,
-            targetPrice: tp, stopLossPrice: sl,
-            entryBoxPos: entryConditions.entryBoxPos,
-            boxRangePct: entryConditions.boxRangePct,
-            boxHigh: (signal.entryMeta.boxHigh as number) ?? null,
-            boxLow: (signal.entryMeta.boxLow as number) ?? null,
-            spreadTicks: filterResult.spreadTicks,
-            targetTicks: filterResult.targetTicks,
-            currentPrice, askPrice, bidPrice,
-            recentBars: minuteBars.slice(-10).map(b => ({
-              t: b.time, o: b.open, h: b.high, l: b.low, c: b.close,
-            })),
-            candidateRank: target.rank,
-            signalMinuteBucket: signalBucket,
-            entryMeta: signal.entryMeta,
-          }, ctx);
+            createMomentumScalpStateV3(
+              strategy.id, strategy.version,
+              target.ticker, target.name,
+              avail.amountPerSlot, null,
+              entryConditions, signal.entryMeta,
+              { candidateRank: target.rank, signalMinuteBucket: signalBucket, fillModel: null },
+              store as localStore.AccountStore, now,
+            );
 
-          console.log(`[ScalpV3:${strategy.id}] PENDING_ENTRY: ${target.name}(${target.ticker}) ${quantity}주 @ ${buyPrice} TP=${tp} SL=${sl}`);
+            const pendingKey = makeStateKey(strategy.id, target.ticker);
+            (store as typeof localStore).updateState('momentumScalpState', pendingKey, {
+              entryPrice: buyPrice, entryQuantity: quantity,
+              targetPrice: tp, stopLossPrice: sl,
+            });
+
+            writeShadowPendingEntryLog({
+              ticker: target.ticker, stockName: target.name,
+              strategyId: strategy.id, strategyVersion: strategy.version,
+              entryPrice: buyPrice, entryQuantity: quantity,
+              allocatedAmount: avail.amountPerSlot,
+              targetPrice: tp, stopLossPrice: sl,
+              entryBoxPos: entryConditions.entryBoxPos,
+              boxRangePct: entryConditions.boxRangePct,
+              boxHigh: (signal.entryMeta.boxHigh as number) ?? null,
+              boxLow: (signal.entryMeta.boxLow as number) ?? null,
+              spreadTicks: filterResult.spreadTicks,
+              targetTicks: filterResult.targetTicks,
+              currentPrice, askPrice, bidPrice,
+              recentBars: minuteBars.slice(-10).map(b => ({
+                t: b.time, o: b.open, h: b.high, l: b.low, c: b.close,
+              })),
+              candidateRank: target.rank,
+              signalMinuteBucket: signalBucket,
+              entryMeta: signal.entryMeta,
+            }, ctx);
+
+            console.log(`[ScalpV3:${strategy.id}] PENDING_ENTRY: ${target.name}(${target.ticker}) ${quantity}주 @ ${buyPrice} TP=${tp} SL=${sl}`);
+          }
         } else {
           // 실전 모드
           const orderResult = await kisClient.submitDomesticOrder(
@@ -652,7 +725,7 @@ async function processSellAccount(
       const parsed = parseStateKey(stateKey);
       if (!parsed) continue;
 
-      if (state.status === 'pending_buy') {
+      if (state.status === 'armed' || state.status === 'pending_buy') {
         if (!isShadow && state.pendingOrderNo) {
           try {
             await kisClient.cancelDomesticOrder(appKey, appSecret, accessToken, accountNo,
@@ -664,7 +737,7 @@ async function processSellAccount(
           writeShadowCancelLog({
             ticker: state.ticker, stockName: state.stockName || state.ticker,
             strategyId: parsed.strategyId, strategyVersion: state.strategyVersion || '0.0',
-            reason: 'market_close_pending_buy_cancel',
+            reason: state.status === 'armed' ? 'market_close_armed_cancel' : 'market_close_pending_buy_cancel',
             elapsedSec: 0, entryPrice: state.entryPrice || 0,
             currentBid: 0, lastAsk: 0,
             fillConservativeAtCancel: false, fillOptimisticAtCancel: false,
@@ -739,9 +812,29 @@ async function processSellAccount(
 
     const roundStates = getAllScalpStatesV3(store as localStore.AccountStore);
     const activeOrPending = Array.from(roundStates.entries())
-      .filter(([, s]) => s.status === 'pending_buy' || s.status === 'active');
+      .filter(([, s]) => s.status === 'armed' || s.status === 'pending_buy' || s.status === 'active');
 
     if (activeOrPending.length === 0 && round === 0) break;
+
+    // [v3.1] armed 상태 체크
+    for (const [stateKey, state] of activeOrPending) {
+      if (state.status !== 'armed') continue;
+      const parsed = parseStateKey(stateKey);
+      if (!parsed) continue;
+
+      try {
+        accessToken = await handleArmedCheck(
+          state, parsed.strategyId,
+          kisClient, appKey, appSecret, accessToken,
+          todayStr, isShadow, store, ctx,
+        );
+      } catch (err) {
+        if (isTokenExpiredError(err)) {
+          accessToken = await getOrRefreshToken('', accountId, credentials, kisClient, true);
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
 
     // pending_buy 체결 확인
     for (const [stateKey, state] of activeOrPending) {
@@ -801,6 +894,133 @@ async function processSellAccount(
     }
     sellCheckSnapshots.clear();
   }
+}
+
+// ========================================
+// armed 상태 체크 (v3.1)
+// ========================================
+
+async function handleArmedCheck(
+  state: MomentumScalpStateV3,
+  strategyId: StrategyId,
+  kisClient: KisApiClient,
+  appKey: string, appSecret: string, accessToken: string,
+  todayStr: string,
+  isShadow: boolean,
+  store: localStore.AccountStore | typeof localStore,
+  ctx?: AccountContext,
+): Promise<string> {
+  const { ticker, stockName, armedAt, armedTriggerLevel, armedTriggerDirection, armedDurationMs } = state;
+  if (!armedAt || armedTriggerLevel == null || !armedDurationMs) {
+    // invalid armed state — clean up
+    deleteScalpStateV3(strategyId, ticker, store as localStore.AccountStore);
+    return accessToken;
+  }
+
+  const armedAtMs = new Date(armedAt).getTime();
+  const elapsedMs = Date.now() - armedAtMs;
+
+  // 호가 조회
+  const askingPrice = await kisClient.getDomesticAskingPrice(appKey, appSecret, accessToken, ticker);
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  const currentBid = parseInt(askingPrice.output1?.bidp1 || '0');
+  const currentAsk = parseInt(askingPrice.output1?.askp1 || '0');
+  const currentPrice = parseInt(askingPrice.output2?.stck_prpr || '0');
+  if (currentBid <= 0 || currentPrice <= 0) return accessToken;
+
+  // triggerLevel 유지 여부 체크
+  const triggerHeld = armedTriggerDirection === 'above'
+    ? currentBid >= armedTriggerLevel
+    : currentBid <= armedTriggerLevel;
+
+  if (elapsedMs >= armedDurationMs) {
+    if (triggerHeld) {
+      // armed 확인 성공 → pending_buy 전환
+      transitionArmedToPendingBuy(strategyId, ticker, store as localStore.AccountStore);
+
+      // pending_buy에 매수가/수량 설정 (armed 생성 시 이미 설정됨)
+      store.appendLog('scalpScanLogs', todayStr, {
+        type: 'ARMED_CONFIRMED',
+        ticker, stockName: stockName || ticker,
+        strategyId, strategyVersion: state.strategyVersion || '0.0',
+        triggerLevel: armedTriggerLevel,
+        armElapsedMs: elapsedMs,
+        currentBid, currentPrice,
+        createdAt: new Date().toISOString(),
+      });
+
+      // PENDING_ENTRY 로그
+      writeShadowPendingEntryLog({
+        ticker, stockName: stockName || ticker,
+        strategyId, strategyVersion: state.strategyVersion || '0.0',
+        entryPrice: state.entryPrice ?? 0,
+        entryQuantity: state.entryQuantity ?? 0,
+        allocatedAmount: state.allocatedAmount,
+        targetPrice: state.targetPrice ?? 0,
+        stopLossPrice: state.stopLossPrice ?? 0,
+        entryBoxPos: state.entryBoxPos,
+        boxRangePct: state.boxRangePct,
+        boxHigh: null, boxLow: null,
+        spreadTicks: state.spreadTicks,
+        targetTicks: state.targetTicks,
+        currentPrice, askPrice: currentAsk, bidPrice: currentBid,
+        recentBars: [],
+        candidateRank: (state as any).candidateRank,
+        signalMinuteBucket: (state as any).signalMinuteBucket,
+        entryMeta: { ...state.entryMeta, armElapsedMs: elapsedMs },
+      }, ctx);
+
+      console.log(`[ScalpV3:${strategyId}] ARMED→PENDING: ${ticker} (${elapsedMs}ms)`);
+    } else {
+      // armed 타임아웃 — triggerLevel 유지 못함
+      writeCandidateMomentLog({
+        type: 'CANDIDATE_MOMENT',
+        momentType: 'armed_timeout',
+        ticker, stockName: stockName || ticker,
+        strategyId, strategyVersion: state.strategyVersion || '0.0',
+        signalReason: state.armedSignalReason || '',
+        currentPrice, askPrice: currentAsk, bidPrice: currentBid,
+        triggerLevel: armedTriggerLevel,
+        recent3mMomentumPct: null,
+        ema10DistancePct: null,
+        ema10Slope: null,
+        candidateRank: (state as any).candidateRank,
+        signalMinuteBucket: (state as any).signalMinuteBucket,
+        armElapsedMs: elapsedMs,
+        worstPriceDuringArm: currentBid,
+        createdAt: new Date().toISOString(),
+      }, ctx);
+
+      deleteScalpStateV3(strategyId, ticker, store as localStore.AccountStore);
+      console.log(`[ScalpV3:${strategyId}] ARMED_TIMEOUT: ${ticker} (${elapsedMs}ms, bid=${currentBid} < trigger=${armedTriggerLevel})`);
+    }
+  } else if (!triggerHeld) {
+    // armed 기간 미경과 + triggerLevel 이탈 → armed_fail
+    writeCandidateMomentLog({
+      type: 'CANDIDATE_MOMENT',
+      momentType: 'armed_fail',
+      ticker, stockName: stockName || ticker,
+      strategyId, strategyVersion: state.strategyVersion || '0.0',
+      signalReason: state.armedSignalReason || '',
+      currentPrice, askPrice: currentAsk, bidPrice: currentBid,
+      triggerLevel: armedTriggerLevel,
+      recent3mMomentumPct: null,
+      ema10DistancePct: null,
+      ema10Slope: null,
+      candidateRank: (state as any).candidateRank,
+      signalMinuteBucket: (state as any).signalMinuteBucket,
+      armElapsedMs: elapsedMs,
+      worstPriceDuringArm: currentBid,
+      createdAt: new Date().toISOString(),
+    }, ctx);
+
+    deleteScalpStateV3(strategyId, ticker, store as localStore.AccountStore);
+    console.log(`[ScalpV3:${strategyId}] ARMED_FAIL: ${ticker} (${elapsedMs}ms, bid=${currentBid} broke trigger=${armedTriggerLevel})`);
+  }
+  // else: armed 기간 미경과 + triggerLevel 유지 → 대기 계속
+
+  return accessToken;
 }
 
 // ========================================

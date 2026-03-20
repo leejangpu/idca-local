@@ -13,6 +13,7 @@ import {
   type ExitReason,
   type FillModel,
   type TradeLogEntry,
+  type CandidateMomentLogEntry,
   ROUND_TRIP_COST_PCT,
 } from './scalpTypes';
 
@@ -135,6 +136,34 @@ export function writeTradeLog(
 }
 
 // ========================================
+// Candidate Moment 로그 (scalpCandidateLogs)
+// ========================================
+
+// near_miss 볼륨 제어: 사이클당 전략별 최대 5건
+const nearMissCounters = new Map<string, number>();
+
+export function resetNearMissCounters(): void {
+  nearMissCounters.clear();
+}
+
+export function writeCandidateMomentLog(
+  entry: CandidateMomentLogEntry,
+  ctx?: AccountContext,
+): void {
+  // near_miss 볼륨 제어
+  if (entry.momentType === 'near_miss') {
+    const key = entry.strategyId;
+    const count = nearMissCounters.get(key) ?? 0;
+    if (count >= 5) return;
+    nearMissCounters.set(key, count + 1);
+  }
+
+  const store = ctx?.store ?? localStore;
+  const todayStr = getKSTDateString();
+  store.appendLog('scalpCandidateLogs', todayStr, entry);
+}
+
+// ========================================
 // Shadow TradeLog 기록 (scalpShadowLogs)
 // ========================================
 
@@ -193,6 +222,9 @@ export function writeShadowExitLog(
   const store = ctx?.store ?? localStore;
   const trail = getPriceTrail(strategyId, ticker);
 
+  // enriched flat fields from entryMeta
+  const meta = params.entryMeta ?? {};
+
   const entry: TradeLogEntry = {
     type: 'EXIT',
     ticker, stockName, market: 'domestic',
@@ -214,7 +246,7 @@ export function writeShadowExitLog(
     currentPriceAtExit: params.currentPriceAtExit ?? null,
     timeToExitSec,
     priceTrail: trail,
-    mfe30Pct: null,  // 30초 MFE는 bestProfitPct의 30초 시점 스냅샷
+    mfe30Pct: null,
     mfe60Pct: params.mfe60Pct ?? null,
     mfe120Pct: params.mfe120Pct ?? null,
     bestProfitPct: params.bestProfitPct ?? null,
@@ -224,6 +256,18 @@ export function writeShadowExitLog(
     positiveScoreDetails: params.positiveScoreDetails ?? null,
     recentMomentumPct: params.recentMomentumPct ?? null,
     entryMeta: params.entryMeta ?? null,
+    // v3.1 enriched flat fields
+    signalTime: (meta.signalTime as string) ?? enteredAt ?? null,
+    entryTriggerLevel: (meta.pullbackBarHigh as number) ?? (meta.compressionTop as number) ?? (meta.openRangeHigh as number) ?? null,
+    armElapsedMs: (meta.armElapsedMs as number) ?? null,
+    fillElapsedSec: timeToExitSec !== null ? null : null, // filled via shadow entry log
+    recent3mMomentumPct: (meta.recentMomentumPct as number) ?? null,
+    ema10DistancePct: (meta.ema10DistancePct as number) ?? null,
+    ema10Slope: (meta.ema10Slope as number) ?? null,
+    prevHighBreak: (meta.prevHighBreak as boolean) ?? null,
+    compression: (meta.compressionRatio as number) ?? null,
+    reclaim: (meta.ema10Reclaim as boolean) ?? null,
+    grossPnlPct: profitRatePct,
     createdAt: new Date().toISOString(),
   };
 

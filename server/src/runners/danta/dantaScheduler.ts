@@ -27,7 +27,7 @@ import {
   getMarketDataProvider,
 } from './dantaEngine';
 import { logError, logDailySummary } from './dantaLogger';
-import { createMarketDataProvider } from './dantaMarketData';
+import { createMarketDataProvider } from '../../lib/marketDataProvider';
 import { record, M, generateReport, getSnapshot, resetDaily } from './dantaMetrics';
 import { sendTelegramMessage, getUserTelegramChatId } from '../../lib/telegram';
 

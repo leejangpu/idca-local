@@ -1,24 +1,25 @@
 /**
- * 단타 v1 — 시세 데이터 프로바이더
+ * 공유 시세 데이터 프로바이더
+ *
+ * 전략 간 WebSocket 연결을 공유하기 위한 공통 모듈.
+ * 계좌별 싱글톤 + 레퍼런스 카운트 구독으로 관리.
  *
  * 두 가지 구현:
- * 1. RestMarketDataProvider — 기존 REST polling (fallback)
+ * 1. RestMarketDataProvider — REST polling (fallback)
  * 2. WebSocketMarketDataProvider — KIS WebSocket 실시간 체결가
- *
- * 엔진은 MarketDataProvider 인터페이스만 사용하므로
- * 런타임에 provider를 교체할 수 있다.
  *
  * KIS WebSocket 스펙:
  * - 실시간 체결가(통합): TR_ID=H0UNCNT0, ws://ops.koreainvestment.com:21000
  * - approval_key: /oauth2/Approval API로 발급
  * - 체결가 데이터에 현재가/매도1호가/매수1호가/매수잔량1 모두 포함
+ * - 최대 40종목 동시 구독
  */
 
 import WebSocket from 'ws';
-import { type AccountContext } from '../../lib/accountContext';
-import { getOrRefreshToken } from '../../lib/kisApi';
+import { type AccountContext } from './accountContext';
+import { getOrRefreshToken } from './kisApi';
 
-const TAG = '[DantaV1:MarketData]';
+const TAG = '[MarketData]';
 
 // ========================================
 // 공통 인터페이스
@@ -510,7 +511,6 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
 
     if (encrypted === '1') {
       // 암호화 데이터는 현재 미지원 (유료 시세)
-      // TODO: AES 복호화 구현 필요 시 추가
       return;
     }
 
@@ -521,7 +521,6 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
     const dataStr = parts.slice(3).join('|'); // 혹시 데이터 내 | 있을 경우 대비
 
     // 각 건은 ^로 구분된 필드
-    // 여러 건이면 ^^ 로 구분될 수 있음 — 실제로는 보통 단일 건
     const records = dataStr.split('^^');
 
     for (const record of records.slice(0, dataCount)) {
@@ -530,11 +529,9 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
 
       // 체결가(H0UNCNT0) 필드 순서 (0-indexed):
       // 0: MKSC_SHRN_ISCD (종목코드)
-      // 1: STCK_CNTG_HOUR (체결시간)
       // 2: STCK_PRPR (현재가)
       // 10: ASKP1 (매도1호가)
       // 11: BIDP1 (매수1호가)
-      // 12: CNTG_VOL (체결거래량)
       // 13: ACML_VOL (누적거래량)
       // 14: ACML_TR_PBMN (누적거래대금)
       // 36: ASKP_RSQN1 (매도잔량1)
@@ -575,4 +572,129 @@ export function createMarketDataProvider(
     return new WebSocketMarketDataProvider(ctx);
   }
   return new RestMarketDataProvider(ctx);
+}
+
+// ========================================
+// 계좌별 싱글톤 레지스트리
+// ========================================
+
+const providerRegistry = new Map<string, MarketDataProvider>();
+
+/** 계좌별 프로바이더 등록 (시작은 호출자가 직접) */
+export function setProvider(accountId: string, provider: MarketDataProvider): void {
+  providerRegistry.set(accountId, provider);
+}
+
+/** 계좌별 프로바이더 조회 */
+export function getProvider(accountId: string): MarketDataProvider | undefined {
+  return providerRegistry.get(accountId);
+}
+
+/** 프로바이더 제거 (stop은 호출자가 직접) */
+export function removeProvider(accountId: string): void {
+  providerRegistry.delete(accountId);
+}
+
+/** 프로바이더가 없으면 생성 + 등록 (start는 호출자가 직접) */
+export function getOrCreateProvider(
+  accountId: string,
+  ctx: AccountContext,
+  mode: MarketDataMode = 'websocket',
+): MarketDataProvider {
+  const existing = providerRegistry.get(accountId);
+  if (existing) return existing;
+
+  const provider = createMarketDataProvider(ctx, mode);
+  providerRegistry.set(accountId, provider);
+  return provider;
+}
+
+// ========================================
+// 레퍼런스 카운트 구독 관리
+// ========================================
+
+// accountId → ticker → Set<consumer>
+const refCounts = new Map<string, Map<string, Set<string>>>();
+
+function getRefMap(accountId: string): Map<string, Set<string>> {
+  if (!refCounts.has(accountId)) {
+    refCounts.set(accountId, new Map());
+  }
+  return refCounts.get(accountId)!;
+}
+
+/**
+ * 레퍼런스 카운트 기반 구독.
+ * 같은 종목을 여러 전략(consumer)이 구독해도 WS 구독은 1회만 발생.
+ * @returns 실제 WS 구독이 발생했으면 true
+ */
+export function subscribeWithRef(accountId: string, ticker: string, consumer: string): boolean {
+  const provider = providerRegistry.get(accountId);
+  if (!provider) {
+    console.warn(`${TAG} subscribeWithRef: no provider for ${accountId}`);
+    return false;
+  }
+
+  const refs = getRefMap(accountId);
+  let consumers = refs.get(ticker);
+  if (!consumers) {
+    consumers = new Set();
+    refs.set(ticker, consumers);
+  }
+
+  const isNew = consumers.size === 0;
+  consumers.add(consumer);
+
+  if (isNew) {
+    provider.subscribe(ticker);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 레퍼런스 카운트 기반 구독 해제.
+ * 모든 consumer가 해제해야 실제 WS 구독이 해제됨.
+ * @returns 실제 WS 구독 해제가 발생했으면 true
+ */
+export function unsubscribeWithRef(accountId: string, ticker: string, consumer: string): boolean {
+  const refs = getRefMap(accountId);
+  const consumers = refs.get(ticker);
+  if (!consumers) return false;
+
+  consumers.delete(consumer);
+
+  if (consumers.size === 0) {
+    refs.delete(ticker);
+    const provider = providerRegistry.get(accountId);
+    if (provider) {
+      provider.unsubscribe(ticker);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 특정 consumer의 모든 구독 해제.
+ * 전략 종료 시 호출하면 해당 전략이 구독한 모든 종목을 정리.
+ */
+export function unsubscribeAllByConsumer(accountId: string, consumer: string): void {
+  const refs = getRefMap(accountId);
+  const provider = providerRegistry.get(accountId);
+
+  for (const [ticker, consumers] of refs) {
+    if (consumers.has(consumer)) {
+      consumers.delete(consumer);
+      if (consumers.size === 0) {
+        refs.delete(ticker);
+        provider?.unsubscribe(ticker);
+      }
+    }
+  }
+}
+
+/** 레퍼런스 카운트 전체 초기화 (계좌 단위) */
+export function clearRefs(accountId: string): void {
+  refCounts.delete(accountId);
 }

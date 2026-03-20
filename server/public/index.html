@@ -427,6 +427,86 @@
       text-align: right; font-size: 0.68em; color: var(--text3); margin-top: 4px; padding-right: 4px;
     }
 
+    /* ===== Stock Alert ===== */
+    .sa-section { margin-bottom: 24px; }
+    .sa-section-title {
+      font-size: 0.82em; font-weight: 700; color: var(--text2); margin-bottom: 10px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .sa-section-title .sa-count { font-weight: 400; color: var(--text3); }
+    .sa-form-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 16px; margin-bottom: 12px;
+    }
+    .sa-form-row { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; flex-wrap: wrap; }
+    .sa-form-group { display: flex; flex-direction: column; gap: 3px; }
+    .sa-form-group label { font-size: 0.72em; color: var(--text2); font-weight: 600; }
+    .sa-form-group input { width: 120px; }
+    .sa-lookup-result { font-size: 0.84em; color: var(--text); margin: 6px 0; }
+
+    .sa-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      margin-bottom: 10px; overflow: hidden;
+    }
+    .sa-card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; border-bottom: 1px solid var(--border);
+    }
+    .sa-card-header-left { display: flex; align-items: center; gap: 8px; }
+    .sa-card-name { font-weight: 700; font-size: 0.92em; }
+    .sa-card-ticker { font-size: 0.78em; color: var(--text2); }
+    .sa-card-body { padding: 12px 16px; }
+    .sa-price-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+    .sa-price-current { font-size: 1.1em; font-weight: 700; }
+    .sa-price-change { font-size: 0.82em; font-weight: 600; }
+    .sa-price-up { color: var(--red); }
+    .sa-price-down { color: var(--accent); }
+
+    .sa-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .sa-field { display: flex; flex-direction: column; gap: 2px; }
+    .sa-field label { font-size: 0.68em; color: var(--text3); font-weight: 600; text-transform: uppercase; }
+    .sa-field .sa-val { font-size: 0.84em; font-weight: 500; }
+    .sa-field input, .sa-field select {
+      font-size: 0.82em; padding: 5px 8px; background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: var(--radius-xs); outline: none; font-family: inherit;
+    }
+    .sa-field input:focus, .sa-field select:focus { border-color: var(--accent); }
+    .sa-field select { appearance: none; cursor: pointer; }
+
+    .sa-triggers { margin: 10px 0; }
+    .sa-triggers-title { font-size: 0.72em; color: var(--text3); font-weight: 600; margin-bottom: 4px; }
+    .sa-trigger-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+    .sa-trigger-item {
+      font-size: 0.74em; padding: 4px 8px; border-radius: var(--radius-xs);
+      background: var(--surface2); border: 1px solid var(--border);
+    }
+    .sa-trigger-label { color: var(--text3); display: block; }
+    .sa-trigger-price { color: var(--text); font-weight: 600; }
+    .sa-trigger-item.buy { border-color: var(--accent); border-left: 3px solid var(--accent); }
+    .sa-trigger-item.sell { border-color: var(--green); border-left: 3px solid var(--green); }
+    .sa-trigger-item.stop { border-color: var(--red); border-left: 3px solid var(--red); }
+
+    .sa-alerts-sent { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+    .sa-alert-badge {
+      font-size: 0.68em; padding: 2px 8px; border-radius: 10px; font-weight: 600;
+      background: var(--surface3); color: var(--text2); border: 1px solid var(--border);
+    }
+    .sa-alert-badge.sent { background: var(--orange-bg); color: var(--orange); border-color: var(--orange-border); }
+
+    .sa-card-actions {
+      display: flex; gap: 6px; padding: 8px 16px 12px; justify-content: flex-end;
+    }
+    .sa-btn {
+      padding: 6px 14px; border-radius: var(--radius-xs); font-size: 0.78em; font-weight: 600;
+      border: 1px solid var(--border); cursor: pointer; transition: var(--transition); font-family: inherit;
+    }
+    .sa-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .sa-btn-primary:hover { background: var(--accent-hover); }
+    .sa-btn-danger { background: transparent; color: var(--red); border-color: var(--red-border); }
+    .sa-btn-danger:hover { background: var(--red-bg); }
+    .sa-btn-default { background: var(--surface2); color: var(--text); }
+    .sa-btn-default:hover { background: var(--surface3); }
+
     /* ===== Responsive ===== */
     @media (max-width: 480px) {
       .container { padding: 16px 12px 80px; }
@@ -447,6 +527,7 @@
     <div id="toast" class="toast"></div>
     <div id="modal-root"></div>
     <div id="dashboard"></div>
+    <div id="stock-alert-section"></div>
     <div id="app"><div class="loading-state"><div class="spinner"></div>Loading...</div></div>
   </div>
 
@@ -925,6 +1006,8 @@
           ${numberRow('종목당 원금', '', ac.principalPerTicker, `onAutoFieldNum('${market}','${strategy}','${configKey}','principalPerTicker',this.value)`, market === 'domestic' ? '원' : '$')}
           ${numberRow('종목 수', '', ac.stockCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','stockCount',this.value)`, '종목')}
           ${numberRow('분할 수', '', ac.splitCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','splitCount',this.value)`, '분할')}
+          ${toggleRow('점증 분할', '후반 회차에 더 많이 매수', ac.ascendingSplit || false, `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit',this.checked)`)}
+          ${pctRow('최소 하락', '평단 대비 이 이상 하락해야 추가 매수', ac.minDropPercent || 0, `onAutoFieldNum('${market}','${strategy}','${configKey}','minDropPercent',fromPct(this.value))`)}
           ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','${configKey}','profitPercent',this.value)`)}
           ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','forceSellCandles',this.value)`, '캔들')}
           ${numberRow('캔들 간격', '', ac.intervalMinutes, `onAutoFieldNum('${market}','${strategy}','${configKey}','intervalMinutes',this.value)`, '분')}
@@ -937,10 +1020,8 @@
           ${toggleRow('자동 손절', '', ac.autoStopLoss, `onAutoField('${market}','${strategy}','${configKey}','autoStopLoss',this.checked)`)}
           ${pctRow('손절', '음수 (예: -5%)', ac.stopLossPercent != null ? ac.stopLossPercent / 100 : undefined, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossPercent',num(this.value))`)}
           ${toggleRow('소진 손절', '분할 소진 시 손절', ac.exhaustionStopLoss, `onAutoField('${market}','${strategy}','${configKey}','exhaustionStopLoss',this.checked)`)}
-          ${ac.stopLossMultiplier !== undefined ? numberRow('손절 배수', '', ac.stopLossMultiplier, `onAutoFieldNum('${market}','${strategy}','${configKey}','stopLossMultiplier',this.value)`, 'x') : ''}
-          ${ac.minDropPercent !== undefined ? pctRow('최소 하락', '평단 대비 최소 낙폭', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','${configKey}','minDropPercent',fromPct(this.value))`) : ''}
+          ${numberRow('소진 손절 %', '평단 대비 손절 (예: 3 = -3%)', ac.exhaustionStopLossPercent ?? 3, `onAutoFieldNum('${market}','${strategy}','${configKey}','exhaustionStopLossPercent',this.value)`, '%')}
           ${ac.peakCheckCandles !== undefined ? numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','peakCheckCandles',this.value)`, '캔들') : ''}
-          ${ac.ascendingSplit !== undefined ? toggleRow('상승 분할', '상승 시 분할 매수', ac.ascendingSplit, `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit',this.checked)`) : ''}
           ${ac.spreadFilterEnabled !== undefined ? toggleRow('스프레드 필터', '', ac.spreadFilterEnabled, `onAutoField('${market}','${strategy}','${configKey}','spreadFilterEnabled',this.checked)`) : ''}
         </div>
         ${ac.selectionMode === 'sideways' ? `
@@ -1748,10 +1829,261 @@
       dashboardTimer = setInterval(loadDashboard, 30000);
     }
 
+    // ==================== Stock Alert ====================
+    const SA_API = '/stock-alerts';
+    let saAlerts = [];
+    let saLookupResult = null;
+
+    function fmtKRW(n) { return n != null ? Number(n).toLocaleString('ko-KR') : '-'; }
+    function fmtUSD(n) { return n != null ? Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'; }
+    function fmtSAPrice(n, market) {
+      if (n == null) return '-';
+      return market === 'US' ? `$${fmtUSD(n)}` : `${fmtKRW(n)}원`;
+    }
+
+    async function loadStockAlerts() {
+      try {
+        const res = await fetch(SA_API);
+        saAlerts = await res.json();
+        renderStockAlerts();
+      } catch (e) {
+        console.error('Stock alert load error:', e);
+      }
+    }
+
+    async function saLookup() {
+      const ticker = $('sa-ticker-input').value.trim();
+      const market = $('sa-market-select').value;
+      if (!ticker) return;
+      try {
+        const res = await fetch(`${SA_API}/lookup`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ ticker, market })
+        });
+        saLookupResult = await res.json();
+        saLookupResult.market = market;
+        $('sa-lookup-info').innerHTML = saLookupResult.stockName
+          ? `<strong>${saLookupResult.stockName}</strong> — 현재가: ${fmtSAPrice(saLookupResult.currentPrice, market)}`
+          : '<span style="color:var(--red)">종목을 찾을 수 없습니다</span>';
+      } catch (e) {
+        $('sa-lookup-info').innerHTML = '<span style="color:var(--red)">조회 실패</span>';
+      }
+    }
+
+    async function saRegister() {
+      const ticker = $('sa-ticker-input').value.trim();
+      const initialBuyPrice = Number($('sa-buy-price').value);
+      const initialBuyAmount = Number($('sa-buy-amount').value);
+      if (!ticker || !initialBuyPrice || !initialBuyAmount) {
+        toast('종목코드, 1차 매수가, 1차 매수금액을 입력하세요', 'error');
+        return;
+      }
+      try {
+        const market = $('sa-market-select').value;
+        const res = await fetch(SA_API, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            ticker, initialBuyPrice, initialBuyAmount,
+            stockName: saLookupResult?.stockName || '',
+            market
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          toast(err.error || '등록 실패', 'error');
+          return;
+        }
+        toast('종목 알리미 등록 완료');
+        $('sa-ticker-input').value = '';
+        $('sa-buy-price').value = '';
+        $('sa-buy-amount').value = '';
+        saLookupResult = null;
+        $('sa-lookup-info').innerHTML = '';
+        await loadStockAlerts();
+      } catch (e) {
+        toast('등록 실패', 'error');
+      }
+    }
+
+    async function saUpdate(id, field, value) {
+      try {
+        const body = {};
+        body[field] = value;
+        const res = await fetch(`${SA_API}/${encodeURIComponent(id)}`, {
+          method: 'PUT', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        if (res.ok) {
+          toast('업데이트 완료');
+          await loadStockAlerts();
+        }
+      } catch (e) {
+        toast('업데이트 실패', 'error');
+      }
+    }
+
+    async function saSaveFields(id) {
+      const safeId = CSS.escape(id);
+      const avgPrice = Number(document.querySelector(`[data-sa-avg="${safeId}"]`).value);
+      const holdingQty = Number(document.querySelector(`[data-sa-qty="${safeId}"]`).value);
+      try {
+        const res = await fetch(`${SA_API}/${encodeURIComponent(id)}`, {
+          method: 'PUT', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ avgPrice, holdingQty })
+        });
+        if (res.ok) {
+          toast('저장 완료');
+          await loadStockAlerts();
+        }
+      } catch (e) {
+        toast('저장 실패', 'error');
+      }
+    }
+
+    async function saDelete(id) {
+      if (!confirm('이 종목 알리미를 삭제하시겠습니까?')) return;
+      try {
+        await fetch(`${SA_API}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        toast('삭제 완료');
+        await loadStockAlerts();
+      } catch (e) {
+        toast('삭제 실패', 'error');
+      }
+    }
+
+    async function saToggleActive(id, active) {
+      await saUpdate(id, 'active', active);
+    }
+
+    function renderStockAlerts() {
+      let html = `
+        <div class="sa-section">
+          <div class="sa-section-title">종목 알리미 <span class="sa-count">${saAlerts.length}종목</span></div>
+
+          <div class="sa-form-card">
+            <div class="sa-form-row">
+              <div class="sa-form-group">
+                <label>시장</label>
+                <select id="sa-market-select" class="input" style="width:80px">
+                  <option value="KR">KR</option>
+                  <option value="US">US</option>
+                </select>
+              </div>
+              <div class="sa-form-group">
+                <label>종목코드</label>
+                <input id="sa-ticker-input" class="input" style="width:100px" placeholder="005930">
+              </div>
+              <button class="sa-btn sa-btn-default" onclick="saLookup()">조회</button>
+            </div>
+            <div id="sa-lookup-info" class="sa-lookup-result"></div>
+            <div class="sa-form-row">
+              <div class="sa-form-group">
+                <label>1차 매수가</label>
+                <input id="sa-buy-price" class="input" type="number" style="width:120px" placeholder="50000">
+              </div>
+              <div class="sa-form-group">
+                <label>1차 매수금액</label>
+                <input id="sa-buy-amount" class="input" type="number" style="width:120px" placeholder="1000000">
+              </div>
+              <button class="sa-btn sa-btn-primary" onclick="saRegister()">등록</button>
+            </div>
+          </div>`;
+
+      saAlerts.forEach(a => {
+        const t = a.triggers || {};
+        const mk = a.market || 'KR';
+        const marketFlag = mk === 'US' ? '🇺🇸' : '🇰🇷';
+        const priceColor = a.lastCheckedPrice >= a.avgPrice ? 'sa-price-up' : 'sa-price-down';
+        const changePct = a.avgPrice > 0 ? ((a.lastCheckedPrice - a.avgPrice) / a.avgPrice * 100).toFixed(2) : '-';
+        const changeSign = changePct > 0 ? '+' : '';
+
+        const buyPhaseLabels = { buy1_done: '1차 완료', buy2_done: '2차 완료', buy3_done: '3차 완료' };
+        const sellPhaseLabels = { none: '없음', profit1_done: '1차 익절', profit2_done: '2차 익절', trailing: '트레일링' };
+
+        const alertTypes = ['buy2','buy3','rapid_drop','stop_loss','profit1','profit2','trailing_ma20','trailing_high'];
+        const alertLabels = { buy2: '2차매수', buy3: '3차매수', rapid_drop: '급락', stop_loss: '손절', profit1: '1차익절', profit2: '2차익절', trailing_ma20: 'MA20이탈', trailing_high: '고점이탈' };
+
+        html += `
+          <div class="sa-card" style="opacity:${a.active ? 1 : 0.5}">
+            <div class="sa-card-header">
+              <div class="sa-card-header-left">
+                <span class="sa-card-name">${marketFlag} ${a.stockName || a.ticker}</span>
+                <span class="sa-card-ticker">${a.ticker}</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" ${a.active ? 'checked' : ''} onchange="saToggleActive('${a.id}', this.checked)">
+                <span class="track"></span>
+              </label>
+            </div>
+            <div class="sa-card-body">
+              <div class="sa-price-row">
+                <span class="sa-price-current">${a.lastCheckedPrice ? fmtSAPrice(a.lastCheckedPrice, mk) : '미조회'}</span>
+                ${a.lastCheckedPrice && a.avgPrice > 0 ? `<span class="sa-price-change ${priceColor}">${changeSign}${changePct}%</span>` : ''}
+              </div>
+
+              <div class="sa-fields">
+                <div class="sa-field">
+                  <label>매수단계</label>
+                  <select onchange="saUpdate('${a.id}','buyPhase',this.value)">
+                    <option value="buy1_done" ${a.buyPhase==='buy1_done'?'selected':''}>1차 완료</option>
+                    <option value="buy2_done" ${a.buyPhase==='buy2_done'?'selected':''}>2차 완료</option>
+                    <option value="buy3_done" ${a.buyPhase==='buy3_done'?'selected':''}>3차 완료</option>
+                  </select>
+                </div>
+                <div class="sa-field">
+                  <label>익절단계</label>
+                  <select onchange="saUpdate('${a.id}','sellPhase',this.value)">
+                    <option value="none" ${a.sellPhase==='none'?'selected':''}>없음</option>
+                    <option value="profit1_done" ${a.sellPhase==='profit1_done'?'selected':''}>1차 익절</option>
+                    <option value="profit2_done" ${a.sellPhase==='profit2_done'?'selected':''}>2차 익절</option>
+                    <option value="trailing" ${a.sellPhase==='trailing'?'selected':''}>트레일링</option>
+                  </select>
+                </div>
+                <div class="sa-field">
+                  <label>평균단가</label>
+                  <input type="number" data-sa-avg="${a.id}" value="${a.avgPrice || ''}">
+                </div>
+                <div class="sa-field">
+                  <label>보유수량</label>
+                  <input type="number" data-sa-qty="${a.id}" value="${a.holdingQty || ''}">
+                </div>
+              </div>
+
+              <div class="sa-triggers">
+                <div class="sa-triggers-title">트리거 가격</div>
+                <div class="sa-trigger-grid">
+                  <div class="sa-trigger-item buy"><span class="sa-trigger-label">2차 매수(-3%)</span><span class="sa-trigger-price">${fmtSAPrice(t.buy2Price, mk)}</span></div>
+                  <div class="sa-trigger-item buy"><span class="sa-trigger-label">3차 매수(-6%)</span><span class="sa-trigger-price">${fmtSAPrice(t.buy3Price, mk)}</span></div>
+                  <div class="sa-trigger-item stop"><span class="sa-trigger-label">손절(-8%)</span><span class="sa-trigger-price">${fmtSAPrice(t.stopLossPrice, mk)}</span></div>
+                  <div class="sa-trigger-item sell"><span class="sa-trigger-label">1차 익절(+10%)</span><span class="sa-trigger-price">${t.profit1Price ? fmtSAPrice(t.profit1Price, mk) : '-'}</span></div>
+                  <div class="sa-trigger-item sell"><span class="sa-trigger-label">2차 익절(+20%)</span><span class="sa-trigger-price">${t.profit2Price ? fmtSAPrice(t.profit2Price, mk) : '-'}</span></div>
+                  <div class="sa-trigger-item stop"><span class="sa-trigger-label">트레일링(-10%)</span><span class="sa-trigger-price">${t.trailingStopPrice ? fmtSAPrice(t.trailingStopPrice, mk) : '-'}</span></div>
+                </div>
+              </div>
+
+              ${a.ma20 ? `<div style="font-size:0.74em;color:var(--text2);margin-top:4px">20일선: ${fmtSAPrice(a.ma20, mk)} | 최고가: ${fmtSAPrice(a.highSinceEntry, mk)}</div>` : ''}
+
+              <div class="sa-alerts-sent">
+                ${alertTypes.map(at => `<span class="sa-alert-badge ${a.alertsSent && a.alertsSent[at] ? 'sent' : ''}">${alertLabels[at]}</span>`).join('')}
+              </div>
+            </div>
+            <div class="sa-card-actions">
+              <button class="sa-btn sa-btn-default" onclick="saSaveFields('${a.id}')">저장</button>
+              <button class="sa-btn sa-btn-danger" onclick="saDelete('${a.id}')">삭제</button>
+            </div>
+          </div>`;
+      });
+
+      html += `</div>`;
+      $('stock-alert-section').innerHTML = html;
+    }
+
     // ==================== Init ====================
     load();
     loadDashboard();
+    loadStockAlerts();
     startDashboardRefresh();
+    setInterval(loadStockAlerts, 60000);
   </script>
 </body>
 </html>

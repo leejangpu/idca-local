@@ -4,8 +4,8 @@
 
 export { startDantaWorker, stopDantaWorker, stopAllDantaWorkers, getDantaWorkerStatus } from './dantaScheduler';
 export { getCandidatePool, getMarketDataProvider } from './dantaEngine';
-export { createMarketDataProvider } from './dantaMarketData';
-export type { MarketDataProvider, TickData, MarketDataMode } from './dantaMarketData';
+export { createMarketDataProvider } from '../../lib/marketDataProvider';
+export type { MarketDataProvider, TickData, MarketDataMode } from '../../lib/marketDataProvider';
 export { getStatus as getRiskStatus } from './dantaRisk';
 export type { DantaV1Config, DantaV1State, DantaCandidate } from './dantaTypes';
 export { DEFAULT_DANTA_CONFIG } from './dantaTypes';

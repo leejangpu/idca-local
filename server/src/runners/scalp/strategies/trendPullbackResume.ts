@@ -1,16 +1,12 @@
 /**
- * 전략 A: trend_pullback_resume
+ * 전략 A: trend_pullback_resume v2.0
  *
  * 가설: 살아 있는 강한 종목의 짧은 눌림 후 재개를 잡으면 follow-through가 붙는다.
  *
- * 조건 (완화 버전 — 초기 데이터 수집용):
- * - 최근 3분 모멘텀 > 0
- * - currentPrice > EMA10
- * - EMA10 기울기 > 0
- * - 최근 2봉 중 1봉 이상 눌림 (close < 직전 close)
- * - currentPrice > 눌림 봉의 high (재개 확인)
- * - spreadTicks <= 2 (1틱 선호지만 2틱까지 허용)
- * - targetTicks 4~6 허용
+ * v2.0 변경:
+ * - 3분 모멘텀 >= +0.2% (강화, nearMiss: 0~0.2%)
+ * - armed triggerLevel = pullbackBar.high
+ * - nearMiss 플래그 추가
  */
 
 import { type ScalpStrategy } from './strategyInterface';
@@ -22,7 +18,6 @@ const NO_ENTRY: EntrySignal = { shouldEnter: false, reason: '', entryMeta: {} };
 function calcEMA(closes: number[], period: number): number {
   if (closes.length === 0) return 0;
   if (closes.length < period) {
-    // 데이터 부족 시 SMA 반환
     return closes.reduce((a, b) => a + b, 0) / closes.length;
   }
   const k = 2 / (period + 1);
@@ -36,10 +31,10 @@ function calcEMA(closes: number[], period: number): number {
 export const trendPullbackResume: ScalpStrategy = {
   id: 'trend_pullback_resume',
   label: '추세눌림재개',
-  version: '1.0',
+  version: '2.0',
 
   isActiveAt(currentMinute: number): boolean {
-    // 09:15~15:15, 점심 제외 — 장초 10분 혼돈 회피
+    // 09:15~15:15, 점심 제외
     if (currentMinute < 555 || currentMinute > 915) return false;
     if (currentMinute >= 690 && currentMinute < 780) return false;
     return true;
@@ -65,12 +60,22 @@ export const trendPullbackResume: ScalpStrategy = {
 
     const closes = minuteBars.map(b => b.close);
 
-    // 1) 최근 3분 모멘텀 > 0
+    // 1) 최근 3분 모멘텀 >= +0.2%
     const c3ago = closes[closes.length - 4];
     const cNow = closes[closes.length - 1];
     const momentumPct = ((cNow - c3ago) / c3ago) * 100;
-    if (momentumPct <= 0) {
-      return { ...NO_ENTRY, reason: `3분 모멘텀 <= 0 (${momentumPct.toFixed(2)}%)` };
+
+    if (momentumPct < 0.2) {
+      // nearMiss: 0~0.2% 사이
+      if (momentumPct > 0) {
+        return {
+          shouldEnter: false,
+          reason: `모멘텀 근접 (${momentumPct.toFixed(2)}%, 0.2% 미달)`,
+          entryMeta: { recentMomentumPct: Number(momentumPct.toFixed(2)) },
+          nearMiss: true,
+        };
+      }
+      return { ...NO_ENTRY, reason: `3분 모멘텀 < 0.2% (${momentumPct.toFixed(2)}%)` };
     }
 
     // 2) EMA10 계산 + currentPrice > EMA10
@@ -87,13 +92,13 @@ export const trendPullbackResume: ScalpStrategy = {
       return { ...NO_ENTRY, reason: `EMA10 기울기 <= 0 (${(ema10Slope * 100).toFixed(3)}%)` };
     }
 
-    // 4) 눌림 감지: 최근 2봉(bar[-2], bar[-3]) 중 1봉 이상 close 하락
+    // 4) 눌림 감지: 최근 1~2봉 눌림 (close 하락), 저점 미이탈
     const bar1 = minuteBars[minuteBars.length - 2]; // 직전 봉
     const bar2 = minuteBars[minuteBars.length - 3]; // 2봉 전
     const bar3 = minuteBars[minuteBars.length - 4]; // 3봉 전
 
-    const pullback1 = bar1.close < bar2.close;  // 직전봉이 2봉전보다 하락
-    const pullback2 = bar2.close < bar3.close;  // 2봉전이 3봉전보다 하락
+    const pullback1 = bar1.close < bar2.close;
+    const pullback2 = bar2.close < bar3.close;
 
     if (!pullback1 && !pullback2) {
       return { ...NO_ENTRY, reason: '눌림 없음 (최근 2봉 모두 상승)' };
@@ -119,6 +124,9 @@ export const trendPullbackResume: ScalpStrategy = {
         pullbackBars: pullback1 && pullback2 ? 2 : 1,
         pullbackBarHigh: pullbackBar.high,
       },
+      triggerLevel: pullbackBar.high,
+      triggerDirection: 'above',
+      armDurationMs: 7000,
     };
   },
 };

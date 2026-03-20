@@ -183,7 +183,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
     autoStopLoss: state.autoStopLoss || false,
     stopLossPercent: (state.stopLossPercent as number) ?? -5,
     exhaustionStopLoss: state.exhaustionStopLoss || false,
-    stopLossMultiplier: (state.stopLossMultiplier as number) ?? 3,
+    exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
     exchangeCode: state.exchangeCode || '',
     selectionMode: state.selectionMode || '',
     conditionName: state.conditionName || '',

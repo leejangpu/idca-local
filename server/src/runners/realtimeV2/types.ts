@@ -33,7 +33,7 @@ export interface RealtimeDdsobV2TickerConfig {
   autoStopLoss?: boolean;
   stopLossPercent?: number;
   exhaustionStopLoss?: boolean;
-  stopLossMultiplier?: number;
+  exhaustionStopLossPercent?: number;
   forceLiquidateAtClose?: boolean;
   minDropPercent?: number;
   peakCheckCandles?: number;
@@ -60,7 +60,7 @@ export interface AutoSelectConfig {
   autoStopLoss?: boolean;
   stopLossPercent?: number;
   exhaustionStopLoss?: boolean;
-  stopLossMultiplier?: number;
+  exhaustionStopLossPercent?: number;
   minDropPercent?: number;
   peakCheckCandles?: number;
   spreadFilterEnabled?: boolean;
@@ -79,7 +79,7 @@ export interface AutoSelectConfigUS {
   autoStopLoss?: boolean;
   stopLossPercent?: number;
   exhaustionStopLoss?: boolean;
-  stopLossMultiplier?: number;
+  exhaustionStopLossPercent?: number;
   minDropPercent?: number;
   peakCheckCandles?: number;
 }

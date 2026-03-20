@@ -569,7 +569,7 @@ interface AutoSelectConfigV2_1 {
   autoStopLoss?: boolean;
   stopLossPercent?: number;
   exhaustionStopLoss?: boolean;
-  stopLossMultiplier?: number;
+  exhaustionStopLossPercent?: number;
   minDropPercent?: number;
   peakCheckCandles?: number;
   ascendingSplit?: boolean;
@@ -844,7 +844,7 @@ export async function forceStopRealtimeDdsobV2Ticker(
     autoStopLoss: (state.autoStopLoss as boolean) || false,
     stopLossPercent: (state.stopLossPercent as number) ?? -5,
     exhaustionStopLoss: (state.exhaustionStopLoss as boolean) || false,
-    stopLossMultiplier: (state.stopLossMultiplier as number) ?? 3,
+    exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
     exchangeCode: (state.exchangeCode as string) || '',
     selectionMode: (state.selectionMode as string) || '',
     conditionName: (state.conditionName as string) || '',
@@ -1212,7 +1212,7 @@ export async function processRealtimeDdsobV2Trading(
             autoStopLoss: (state.autoStopLoss as boolean) || false,
             stopLossPercent: (state.stopLossPercent as number) ?? -5,
             exhaustionStopLoss: (state.exhaustionStopLoss as boolean) || false,
-            stopLossMultiplier: (state.stopLossMultiplier as number) ?? 3,
+            exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
             exchangeCode: (state.exchangeCode as string) || '',
             selectionMode: (state.selectionMode as string) || '',
             conditionName: (state.conditionName as string) || '',
@@ -1467,7 +1467,7 @@ export async function processRealtimeDdsobV2Trading(
       autoStopLoss: tickerConfig.autoStopLoss || false,
       stopLossPercent: tickerConfig.stopLossPercent ?? -5,
       exhaustionStopLoss: tickerConfig.exhaustionStopLoss || false,
-      stopLossMultiplier: tickerConfig.stopLossMultiplier ?? 3,
+      exhaustionStopLossPercent: tickerConfig.exhaustionStopLossPercent ?? 3,
       selectionMode: tickerConfig.selectionMode || '',
       conditionName: tickerConfig.conditionName || '',
       buyRecords: [],
@@ -2033,19 +2033,19 @@ export async function processRealtimeDdsobV2Trading(
     const avgBuyPrice = totalBuyCost / totalQty;
     const exhaustionEnabled = tickerConfig.exhaustionStopLoss ?? false;
     if (exhaustionEnabled && buyRecords.length >= splitCount) {
-      const multiplier = tickerConfig.stopLossMultiplier ?? 3;
-      const hardStopPrice = avgBuyPrice * (1 - profitPercent * multiplier);
+      const exhaustionPct = tickerConfig.exhaustionStopLossPercent ?? 3;
+      const hardStopPrice = avgBuyPrice * (1 - exhaustionPct / 100);
 
       if (currentPrice <= hardStopPrice) {
         const lossPercent = ((currentPrice - avgBuyPrice) / avgBuyPrice * 100).toFixed(2);
-        console.log(`[RealtimeDdsobV2:${tag}] Exhaustion hard stop: ${ticker} price ${fp(currentPrice)} <= ${fp(hardStopPrice)} (avg=${fp(avgBuyPrice)}, TP=${profitPercent * 100}%, mult=${multiplier})`);
+        console.log(`[RealtimeDdsobV2:${tag}] Exhaustion hard stop: ${ticker} price ${fp(currentPrice)} <= ${fp(hardStopPrice)} (avg=${fp(avgBuyPrice)}, limit=-${exhaustionPct}%)`);
         const result = await forceStopRealtimeDdsobV2Ticker(ticker, market, 'exhaustion_stop_loss', strategyId);
 
         if (chatId) {
           await sendTelegramMessage(chatId,
             `🛑 <b>분할소진 손절</b> [${tickerConfig.stockName || ticker}]\n\n` +
             `현재가: ${fp(currentPrice)} (평단: ${fp(avgBuyPrice)})\n` +
-            `손실률: ${lossPercent}% (한도: -${(profitPercent * multiplier * 100).toFixed(1)}%)\n` +
+            `손실률: ${lossPercent}% (한도: -${exhaustionPct}%)\n` +
             `분할: ${buyRecords.length}/${splitCount} 소진\n` +
             `${result.success ? result.message : `실패: ${result.message}`}`
           );

@@ -287,7 +287,7 @@ export function getOccupiedStateKeysByStrategy(
   const all = (store ?? localStore).getAllStates<MomentumScalpStateV3>(STATE_COLLECTION);
   const result: string[] = [];
   for (const [key, s] of all) {
-    if (!['active', 'pending_buy', 'pending_sell'].includes(s.status)) continue;
+    if (!['armed', 'active', 'pending_buy', 'pending_sell'].includes(s.status)) continue;
     const parsed = parseStateKey(key);
     if (parsed && parsed.strategyId === strategyId) {
       result.push(key);
@@ -316,7 +316,7 @@ export function getAllScalpOccupiedTickers(store?: AccountStore): Set<string> {
   const all = (store ?? localStore).getAllStates<MomentumScalpStateV3>(STATE_COLLECTION);
   const result = new Set<string>();
   for (const [key, s] of all) {
-    if (!['active', 'pending_buy', 'pending_sell'].includes(s.status)) continue;
+    if (!['armed', 'active', 'pending_buy', 'pending_sell'].includes(s.status)) continue;
     const parsed = parseStateKey(key);
     result.add(parsed ? parsed.ticker : key);
   }
@@ -408,6 +408,12 @@ export function createMomentumScalpStateV3(
     candidateRank: extraFields?.candidateRank ?? null,
     signalMinuteBucket: extraFields?.signalMinuteBucket ?? null,
     fillModel: (extraFields?.fillModel as MomentumScalpStateV3['fillModel']) ?? null,
+    // v3.1 armed fields
+    armedAt: null,
+    armedTriggerLevel: null,
+    armedTriggerDirection: null,
+    armedDurationMs: null,
+    armedSignalReason: null,
   } satisfies MomentumScalpStateV3);
 }
 
@@ -510,7 +516,7 @@ export function getAllScalpStatesV3(store?: AccountStore): Map<string, MomentumS
   // 하위 호환: strategyId 없는 기존 상태에 기본값 부여
   for (const [, state] of all) {
     if (!state.strategyId) {
-      state.strategyId = 'box_rebound_control';
+      state.strategyId = 'trend_pullback_resume';
       state.strategyVersion = '0.0';
     }
     if (state.entryMeta === undefined) state.entryMeta = null;
@@ -521,8 +527,106 @@ export function getAllScalpStatesV3(store?: AccountStore): Map<string, MomentumS
     if (state.candidateRank === undefined) (state as any).candidateRank = null;
     if (state.signalMinuteBucket === undefined) (state as any).signalMinuteBucket = null;
     if (state.fillModel === undefined) (state as any).fillModel = null;
+    // v3.1 armed fields
+    if (state.armedAt === undefined) state.armedAt = null;
+    if (state.armedTriggerLevel === undefined) state.armedTriggerLevel = null;
+    if (state.armedTriggerDirection === undefined) state.armedTriggerDirection = null;
+    if (state.armedDurationMs === undefined) state.armedDurationMs = null;
+    if (state.armedSignalReason === undefined) state.armedSignalReason = null;
   }
   return all;
+}
+
+/**
+ * v3.1 armed 상태 생성
+ */
+export function createArmedScalpStateV3(
+  strategyId: StrategyId,
+  strategyVersion: string,
+  ticker: string,
+  stockName: string,
+  allocatedAmount: number,
+  triggerLevel: number,
+  triggerDirection: 'above' | 'below',
+  armDurationMs: number,
+  signalReason: string,
+  entryConditions?: {
+    entryBoxPos: number | null;
+    boxRangePct: number | null;
+    spreadTicks: number | null;
+    targetTicks: number | null;
+  },
+  entryMeta?: Record<string, unknown> | null,
+  extraFields?: {
+    candidateRank?: number | null;
+    signalMinuteBucket?: string | null;
+    fillModel?: string | null;
+    entryPrice?: number | null;
+    entryQuantity?: number | null;
+    targetPrice?: number | null;
+    stopLossPrice?: number | null;
+  },
+  store?: AccountStore,
+): void {
+  const stateKey = makeStateKey(strategyId, ticker);
+  (store ?? localStore).setState(STATE_COLLECTION, stateKey, {
+    ticker,
+    stockName,
+    market: 'domestic',
+    status: 'armed',
+    strategyId,
+    strategyVersion,
+    entryPrice: extraFields?.entryPrice ?? null,
+    entryQuantity: extraFields?.entryQuantity ?? null,
+    targetPrice: extraFields?.targetPrice ?? null,
+    stopLossPrice: extraFields?.stopLossPrice ?? null,
+    allocatedAmount,
+    pendingOrderNo: null,
+    enteredAt: null,
+    updatedAt: new Date().toISOString(),
+    sellOrderNo: null,
+    sellExitReason: null,
+    entryBoxPos: entryConditions?.entryBoxPos ?? null,
+    boxRangePct: entryConditions?.boxRangePct ?? null,
+    spreadTicks: entryConditions?.spreadTicks ?? null,
+    targetTicks: entryConditions?.targetTicks ?? null,
+    bestBidAtExit: null,
+    shadowPendingAt: null,
+    bestProfitPct: null,
+    mfe30GateChecked: false,
+    mfe60Pct: null,
+    mfe120Pct: null,
+    mfe60Checked: false,
+    mfe120Checked: false,
+    positiveScore: null,
+    positiveScoreDetails: null,
+    entryMeta: entryMeta ?? null,
+    candidateRank: extraFields?.candidateRank ?? null,
+    signalMinuteBucket: extraFields?.signalMinuteBucket ?? null,
+    fillModel: (extraFields?.fillModel as MomentumScalpStateV3['fillModel']) ?? null,
+    // armed fields
+    armedAt: new Date().toISOString(),
+    armedTriggerLevel: triggerLevel,
+    armedTriggerDirection: triggerDirection,
+    armedDurationMs: armDurationMs,
+    armedSignalReason: signalReason,
+  } satisfies MomentumScalpStateV3);
+}
+
+/**
+ * v3.1 armed → pending_buy 전환
+ */
+export function transitionArmedToPendingBuy(
+  strategyId: StrategyId,
+  ticker: string,
+  store?: AccountStore,
+): void {
+  const stateKey = makeStateKey(strategyId, ticker);
+  (store ?? localStore).updateState(STATE_COLLECTION, stateKey, {
+    status: 'pending_buy',
+    shadowPendingAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 /**
