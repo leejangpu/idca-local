@@ -10,14 +10,7 @@ export interface RealtimeDdsobV2Config {
   autoSelectEnabled?: boolean;
   autoSelectConfig?: AutoSelectConfig;
   autoSelectEnabledUS?: boolean;
-  autoSelectConfigUS?: AutoSelectConfigUS;
-}
-
-export interface RealtimeDdsobV2_1Config {
-  tickers: RealtimeDdsobV2TickerConfig[];
-  stopAfterCycleEnd: boolean;
-  autoSelectEnabledUS?: boolean;
-  autoSelectConfigUS?: AutoSelectConfigUS;
+  autoSelectConfigUS?: AutoSelectConfig;
 }
 
 export interface RealtimeDdsobV2TickerConfig {
@@ -40,7 +33,7 @@ export interface RealtimeDdsobV2TickerConfig {
   exchangeCode?: string;
   selectionMode?: string;
   conditionName?: string;
-  ascendingSplit?: boolean;
+  ascendingSplit?: boolean | 'reverse';
 }
 
 export interface AutoSelectConfig {
@@ -51,7 +44,7 @@ export interface AutoSelectConfig {
   profitPercent: number;
   forceSellCandles: number;
   intervalMinutes: number;
-  selectionMode: 'mixed' | 'marketCapOnly' | 'volumeOnly' | 'sideways';
+  selectionMode: 'mixed' | 'marketCapOnly' | 'volumeOnly' | 'sideways' | 'tradingAmount';
   maxStockPrice: number;
   htsUserId?: string;
   conditionName?: string;
@@ -64,24 +57,7 @@ export interface AutoSelectConfig {
   minDropPercent?: number;
   peakCheckCandles?: number;
   spreadFilterEnabled?: boolean;
-  ascendingSplit?: boolean;
-}
-
-export interface AutoSelectConfigUS {
-  selectionMode?: 'tradingAmount';
-  principalMode: 'auto' | 'manual';
-  principalPerTicker: number;
-  stockCount: number;
-  splitCount: number;
-  profitPercent: number;
-  forceSellCandles: number;
-  intervalMinutes: number;
-  autoStopLoss?: boolean;
-  stopLossPercent?: number;
-  exhaustionStopLoss?: boolean;
-  exhaustionStopLossPercent?: number;
-  minDropPercent?: number;
-  peakCheckCandles?: number;
+  ascendingSplit?: boolean | 'reverse';
 }
 
 export interface IndicatorsState {

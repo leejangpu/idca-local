@@ -16,6 +16,7 @@ import {
   type RealtimeDdsobV2Config,
   extractTickerConfigsV2,
 } from './types';
+import { buildCycleHistoryData } from './process';
 
 // ==================== 자격증명 헬퍼 ====================
 
@@ -161,42 +162,14 @@ export async function forceStopRealtimeDdsobV2Ticker(
   const estimatedPrice = (state.previousPrice as number) || 0;
   const estimatedProfit = ((state.totalRealizedProfit as number) || 0) + (estimatedPrice * totalQty - totalBuyAmount);
 
-  store.addCycleHistory({
-    ticker,
-    market,
+  store.addCycleHistory(buildCycleHistoryData(state, {
     strategy: strategyId,
-    stockName: (state.stockName as string) || ticker,
-    cycleNumber: (state.cycleNumber as number) || 1,
-    autoSelected: state.autoSelected || false,
     eodAction: reason,
-    startedAt: state.startedAt,
-    completedAt: new Date().toISOString(),
-    principal: state.principal,
-    splitCount: state.splitCount,
-    profitPercent: state.profitPercent,
-    amountPerRound: state.amountPerRound,
-    forceSellCandles: state.forceSellCandles,
-    intervalMinutes: state.intervalMinutes,
-    minDropPercent: (state.minDropPercent as number) || 0,
-    peakCheckCandles: (state.peakCheckCandles as number) ?? 0,
-    bufferPercent: 0.01,
-    autoStopLoss: state.autoStopLoss || false,
-    stopLossPercent: (state.stopLossPercent as number) ?? -5,
-    exhaustionStopLoss: state.exhaustionStopLoss || false,
-    exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
-    exchangeCode: state.exchangeCode || '',
-    selectionMode: state.selectionMode || '',
-    conditionName: state.conditionName || '',
-    totalBuyAmount: (state.totalBuyAmount as number) || 0,
     totalSellAmount: ((state.totalSellAmount as number) || 0) + estimatedPrice * totalQty,
     totalRealizedProfit: estimatedProfit,
     finalProfitRate: (state.principal as number) > 0 ? estimatedProfit / (state.principal as number) : 0,
-    maxRoundsAtEnd: (state.maxRounds as number) || (state.splitCount as number),
-    candlesSinceCycleStart: (state.candlesSinceCycleStart as number) || 0,
-    totalForceSellCount: (state.totalForceSellCount as number) || 0,
-    totalForceSellLoss: (state.totalForceSellLoss as number) || 0,
     forceStopSoldQuantity: totalQty,
-  });
+  }));
 
   // 6. state 삭제
   store.deleteState('realtimeDdsobV2State', ticker);

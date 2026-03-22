@@ -1006,7 +1006,7 @@
           ${numberRow('종목당 원금', '', ac.principalPerTicker, `onAutoFieldNum('${market}','${strategy}','${configKey}','principalPerTicker',this.value)`, market === 'domestic' ? '원' : '$')}
           ${numberRow('종목 수', '', ac.stockCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','stockCount',this.value)`, '종목')}
           ${numberRow('분할 수', '', ac.splitCount, `onAutoFieldNum('${market}','${strategy}','${configKey}','splitCount',this.value)`, '분할')}
-          ${toggleRow('점증 분할', '후반 회차에 더 많이 매수', ac.ascendingSplit || false, `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit',this.checked)`)}
+          ${selectRow('분할 방식', [['','균등'],['true','점증(후반↑)'],['reverse','점증(전반↑)']], String(ac.ascendingSplit || ''), `onAutoField('${market}','${strategy}','${configKey}','ascendingSplit', this.value === 'true' ? true : this.value === 'reverse' ? 'reverse' : false)`)}
           ${pctRow('최소 하락', '평단 대비 이 이상 하락해야 추가 매수', ac.minDropPercent || 0, `onAutoFieldNum('${market}','${strategy}','${configKey}','minDropPercent',fromPct(this.value))`)}
           ${pctRow('목표 수익률', '', ac.profitPercent, `onAutoFieldPct('${market}','${strategy}','${configKey}','profitPercent',this.value)`)}
           ${numberRow('강제 매도 캔들', '', ac.forceSellCandles, `onAutoFieldNum('${market}','${strategy}','${configKey}','forceSellCandles',this.value)`, '캔들')}
@@ -1082,7 +1082,7 @@
           ${pctRow('최소 하락', '평단 대비 최소 낙폭', ac.minDropPercent, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropPercent',fromPct(this.value))`)}
           ${numberRow('최소 하락 틱', '', ac.minDropTicks, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','minDropTicks',this.value)`, '틱')}
           ${numberRow('피크 체크 캔들', '', ac.peakCheckCandles, `onAutoFieldNum('${market}','${strategy}','autoSelectConfigCrypto','peakCheckCandles',this.value)`, '캔들')}
-          ${toggleRow('상승 분할', '', ac.ascendingSplit, `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ascendingSplit',this.checked)`)}
+          ${selectRow('분할 방식', [['','균등'],['true','점증(후반↑)'],['reverse','점증(전반↑)']], String(ac.ascendingSplit || ''), `onAutoField('${market}','${strategy}','autoSelectConfigCrypto','ascendingSplit', this.value === 'true' ? true : this.value === 'reverse' ? 'reverse' : false)`)}
         </div>
         <div class="save-bar">
           <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${strategy}')">저장</button>

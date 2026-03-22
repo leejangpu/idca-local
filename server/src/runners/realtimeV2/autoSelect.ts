@@ -15,21 +15,18 @@ import {
 } from '../../lib/configHelper';
 import { sendTelegramMessage, getUserTelegramChatId } from '../../lib/telegram';
 import { getOccupiedTickersExcluding } from '../../lib/activeTickerRegistry';
-import { getAscendingMaxPrice } from '../../lib/realtimeDdsobV2Calculator';
 import {
   getKRMarketHolidayName,
   getKSTDateString,
 } from '../../lib/marketUtils';
 import { getUSMarketHolidayName } from '../../lib/usMarketHolidays';
-import { calculateEMA, calculateRSI } from '../../lib/rsiCalculator';
 import {
   type RealtimeDdsobV2Config,
-  type RealtimeDdsobV2_1Config,
   type RealtimeDdsobV2TickerConfig,
   type AutoSelectConfig,
-  type AutoSelectConfigUS,
   extractTickerConfigsV2,
 } from './types';
+import { buildCycleHistoryData } from './process';
 
 // ==================== 로컬 타입 정의 ====================
 
@@ -37,36 +34,6 @@ interface ConditionItem {
   seq: string;
   groupName: string;
   conditionName: string;
-}
-
-interface AutoSelectConfigV2_1 {
-  principalMode: 'auto' | 'manual';
-  principalPerTicker: number;
-  stockCount: number;
-  splitCount: number;
-  profitPercent: number;
-  forceSellCandles: number;
-  intervalMinutes: number;
-  priceMin?: number;
-  priceMax?: number;
-  changeRateMin?: number;
-  changeRateMax?: number;
-  indicatorFilterEnabled?: boolean;
-  indicatorTimeframe?: number;
-  ema20Filter?: boolean;
-  ema5Filter?: boolean;
-  ema20DisparityMin?: number;
-  ema20DisparityMax?: number;
-  rsiFilterEnabled?: boolean;
-  rsiMin?: number;
-  rsiMax?: number;
-  autoStopLoss?: boolean;
-  stopLossPercent?: number;
-  exhaustionStopLoss?: boolean;
-  exhaustionStopLossPercent?: number;
-  minDropPercent?: number;
-  peakCheckCandles?: number;
-  ascendingSplit?: boolean;
 }
 
 // ==================== 틱 필터 상수/타입/함수 ====================
@@ -125,6 +92,65 @@ async function getDomesticOrderbookInfo(
   const tpTicks = tick > 0 ? tpAbs / tick : 0;
 
   return { spreadTicks, spreadAbs, tick, tpTicks, askQty, bidQty, currentPrice, basePrice };
+}
+
+interface OverseasOrderbookInfo {
+  spreadAbs: number;
+  spreadBps: number;
+  tpBps: number;
+  askQty: number;
+  bidQty: number;
+  currentPrice: number;
+  basePrice: number;
+}
+
+async function getOverseasOrderbookInfo(
+  kisClient: KisApiClient,
+  appKey: string, appSecret: string, accessToken: string,
+  ticker: string,
+  exchange: string,
+  profitPercent: number
+): Promise<OverseasOrderbookInfo> {
+  const resp = await kisClient.getOverseasAskingPrice(appKey, appSecret, accessToken, ticker, exchange);
+
+  if (resp.rt_cd !== '0') {
+    throw new Error(`Overseas asking price API error: ${resp.msg1} (rt_cd=${resp.rt_cd})`);
+  }
+
+  const askp1 = parseFloat(resp.output2?.[0]?.pask1 || '0');
+  const bidp1 = parseFloat(resp.output2?.[0]?.pbid1 || '0');
+  const askQty = parseInt(resp.output2?.[0]?.vask1 || '0');
+  const bidQty = parseInt(resp.output2?.[0]?.vbid1 || '0');
+  const currentPrice = parseFloat(resp.output1?.last || '0');
+  const basePrice = parseFloat(resp.output1?.base || '0');
+
+  const spreadAbs = askp1 > 0 && bidp1 > 0 ? askp1 - bidp1 : Infinity;
+  const spreadBps = spreadAbs !== Infinity && bidp1 > 0 ? (spreadAbs / bidp1) * 10000 : Infinity;
+  const tpBps = profitPercent * 10000;
+
+  return { spreadAbs, spreadBps, tpBps, askQty, bidQty, currentPrice, basePrice };
+}
+
+function checkOverseasSpreadFilter(
+  info: OverseasOrderbookInfo,
+  orderQty: number
+): { pass: boolean; reason?: string } {
+  // 스프레드가 TP의 50% 이상이면 제외 (익절 마진 부족)
+  const maxSpreadBps = info.tpBps * 0.5;
+  if (info.spreadBps > maxSpreadBps) {
+    return { pass: false, reason: `spread ${info.spreadBps.toFixed(1)}bps > TP×50% ${maxSpreadBps.toFixed(1)}bps` };
+  }
+  // 유동성 체크
+  if (orderQty > 0) {
+    const minQty = orderQty * LIQUIDITY_MULTIPLIER;
+    if (info.askQty < minQty) {
+      return { pass: false, reason: `ask잔량 ${info.askQty} < ${minQty} (${orderQty}×${LIQUIDITY_MULTIPLIER})` };
+    }
+    if (info.bidQty < minQty) {
+      return { pass: false, reason: `bid잔량 ${info.bidQty} < ${minQty} (${orderQty}×${LIQUIDITY_MULTIPLIER})` };
+    }
+  }
+  return { pass: true };
 }
 
 function checkTickFilter(
@@ -211,100 +237,48 @@ async function selectWithSpreadFilter(
   return selected;
 }
 
-// ==================== v2.1 지표 필터 ====================
-
-async function applyIndicatorFiltersUS(
-  candidates: Array<{ ticker: string; name: string; price: number; tamt: number; rate: number; excd: string }>,
-  autoConfig: AutoSelectConfigV2_1,
+async function selectWithSpreadFilterUS(
+  candidates: Array<{ ticker: string; name: string; price: number; excd: string }>,
+  slotsToFill: number,
+  profitPercent: number,
   kisClient: KisApiClient,
-  appKey: string,
-  appSecret: string,
-  accessToken: string,
-  targetCount: number,
-): Promise<typeof candidates> {
-  const passed: typeof candidates = [];
-  const ema20On = autoConfig.ema20Filter !== false;
-  const ema5On = autoConfig.ema5Filter !== false;
-  const disparityMin = autoConfig.ema20DisparityMin ?? 100;
-  const disparityMax = autoConfig.ema20DisparityMax ?? 103;
-  const rsiOn = autoConfig.rsiFilterEnabled !== false;
-  const rsiMin = autoConfig.rsiMin ?? 40;
-  const rsiMax = autoConfig.rsiMax ?? 65;
-  const nmin = autoConfig.indicatorTimeframe ?? 5;
+  appKey: string, appSecret: string, accessToken: string,
+  amountPerRound?: number,
+  spreadFilterEnabled: boolean = true
+): Promise<Array<{ ticker: string; name: string; price: number; excd: string }>> {
+  const selected: typeof candidates = [];
 
-  console.log(`[V2.1:IndicatorFilter:US] EMA20=${ema20On}, EMA5=${ema5On}, 이격도=${disparityMin}~${disparityMax}%, RSI=${rsiOn ? `${rsiMin}~${rsiMax}` : 'OFF'}, 목표=${targetCount}개, ${nmin}분봉`);
+  if (!spreadFilterEnabled) {
+    console.log('[AutoSelect:US] Spread filter disabled, selecting top candidates');
+    return candidates.slice(0, slotsToFill);
+  }
 
-  let checked = 0;
-  for (const c of candidates) {
-    if (passed.length >= targetCount) {
-      console.log(`[V2.1:IndicatorFilter:US] 목표 ${targetCount}개 달성, 조기 종료 (${checked}/${candidates.length} 체크)`);
-      break;
-    }
-
-    checked++;
-    const rank = checked;
-
+  for (const candidate of candidates) {
+    if (selected.length >= slotsToFill) break;
     try {
       await new Promise(resolve => setTimeout(resolve, 300));
-      const barResp = await kisClient.getOverseasMinuteBars(
-        appKey, appSecret, accessToken, c.ticker, nmin, 30, c.excd
+      const info = await getOverseasOrderbookInfo(
+        kisClient, appKey, appSecret, accessToken, candidate.ticker, candidate.excd, profitPercent
       );
+      const price = info.currentPrice || candidate.price;
 
-      if (!barResp.output2 || barResp.output2.length < 21) {
-        console.log(`[V2.1:IndicatorFilter:US] #${rank} ${c.ticker}: 캔들부족(${barResp.output2?.length || 0}개) → SKIP`);
+      const estimatedQty = amountPerRound && price > 0 ? Math.floor(amountPerRound / price) : 0;
+
+      const { pass, reason } = checkOverseasSpreadFilter(info, estimatedQty);
+      if (!pass) {
+        console.log(`[AutoSelect:US] ${candidate.name}(${candidate.ticker}) ${reason} → SKIP`);
         continue;
       }
 
-      const closes = barResp.output2
-        .map((b: { last: string }) => parseFloat(b.last))
-        .filter((v: number) => v > 0)
-        .reverse();
-
-      if (closes.length < 21) {
-        console.log(`[V2.1:IndicatorFilter:US] #${rank} ${c.ticker}: 유효캔들부족(${closes.length}개) → SKIP`);
-        continue;
-      }
-
-      const currentPrice = closes[closes.length - 1];
-
-      const ema20 = calculateEMA(closes, 20);
-      if (ema20 === null) continue;
-      if (ema20On && currentPrice <= ema20) {
-        console.log(`[V2.1:IndicatorFilter:US] #${rank} ${c.ticker} ($${c.price}, ${c.rate.toFixed(1)}%): 현재가 ≤ EMA20 → SKIP`);
-        continue;
-      }
-
-      const disparity = (currentPrice / ema20) * 100;
-      if (disparity < disparityMin || disparity > disparityMax) {
-        console.log(`[V2.1:IndicatorFilter:US] #${rank} ${c.ticker} ($${c.price}, ${c.rate.toFixed(1)}%): 이격도${disparity.toFixed(1)}% → SKIP`);
-        continue;
-      }
-
-      if (ema5On) {
-        const ema5 = calculateEMA(closes, 5);
-        if (ema5 === null || currentPrice <= ema5) {
-          console.log(`[V2.1:IndicatorFilter:US] #${rank} ${c.ticker}: EMA5 미통과 → SKIP`);
-          continue;
-        }
-      }
-
-      if (rsiOn) {
-        const rsi = calculateRSI(closes, 14);
-        if (rsi === null || rsi < rsiMin || rsi > rsiMax) {
-          console.log(`[V2.1:IndicatorFilter:US] #${rank} ${c.ticker} ($${c.price}, ${c.rate.toFixed(1)}%): RSI(${rsi}) 범위 밖 → SKIP`);
-          continue;
-        }
-      }
-
-      console.log(`[V2.1:IndicatorFilter:US] #${rank} ${c.ticker} ($${c.price}, ${c.rate.toFixed(1)}%, 이격도${disparity.toFixed(1)}%): PASS [${passed.length + 1}/${targetCount}]`);
-      passed.push(c);
+      console.log(`[AutoSelect:US] ${candidate.name}(${candidate.ticker}) spread=${info.spreadBps.toFixed(1)}bps, TP=${info.tpBps.toFixed(1)}bps, ask=${info.askQty}, bid=${info.bidQty} → OK`);
+      selected.push(candidate);
     } catch (err) {
-      console.warn(`[V2.1:IndicatorFilter:US] #${rank} ${c.ticker}: API에러 → SKIP`, err instanceof Error ? err.message : '');
+      console.error(`[AutoSelect:US] Spread check failed for ${candidate.ticker}, skipping:`, err);
+      continue;
     }
   }
 
-  console.log(`[V2.1:IndicatorFilter:US] 결과: ${checked}개 체크 → ${passed.length}개 통과`);
-  return passed;
+  return selected;
 }
 
 // ==================== 자격증명 헬퍼 ====================
@@ -370,35 +344,17 @@ export async function triggerAutoSelectStocks(market: string, ctx?: AccountConte
   }
 
   const targetMarket: MarketType = isUS ? 'overseas' : 'domestic';
-  const isV2Active = isMarketStrategyActive(commonConfig, targetMarket, 'realtimeDdsobV2');
-  const isV2_1Active = isMarketStrategyActive(commonConfig, targetMarket, 'realtimeDdsobV2_1');
-  if (!isV2Active && !isV2_1Active) {
-    throw new Error('realtimeDdsobV2/V2.1 전략이 아니거나 매매가 비활성화 상태입니다');
-  }
-
-  if (isUS && isV2_1Active) {
-    const rdConfig = store.getStrategyConfig<RealtimeDdsobV2_1Config & { autoSelectConfigUS?: AutoSelectConfigV2_1 }>(targetMarket, 'realtimeDdsobV2_1');
-    if (!rdConfig?.autoSelectEnabledUS) {
-      throw new Error('v2.1 해외 자동 종목선정이 비활성화 상태입니다');
-    }
-    const autoConfigV2_1 = rdConfig.autoSelectConfigUS;
-    if (!autoConfigV2_1) {
-      throw new Error('v2.1 해외 자동선별 설정이 없습니다');
-    }
-    if (autoConfigV2_1.principalMode === 'manual' && !autoConfigV2_1.principalPerTicker) {
-      throw new Error('종목당 투자금이 설정되지 않았습니다');
-    }
-    await processAutoSelectStocksV2_1US(autoConfigV2_1, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
-    return { success: true, message: 'v2.1 해외 지표 자동선별이 완료되었습니다' };
+  if (!isMarketStrategyActive(commonConfig, targetMarket, 'realtimeDdsobV2')) {
+    throw new Error('realtimeDdsobV2 전략이 아니거나 매매가 비활성화 상태입니다');
   }
 
   const rdConfig = store.getStrategyConfig<RealtimeDdsobV2Config>(targetMarket, 'realtimeDdsobV2');
 
   if (isUS) {
-    if (!rdConfig?.autoSelectEnabled) {
+    if (!rdConfig?.autoSelectEnabledUS) {
       throw new Error('해외 자동 종목선정이 비활성화 상태입니다');
     }
-    const autoConfigUS = rdConfig.autoSelectConfig as unknown as AutoSelectConfigUS;
+    const autoConfigUS = rdConfig.autoSelectConfigUS as AutoSelectConfig | undefined;
     if (!autoConfigUS) {
       throw new Error('해외 자동선별 설정이 없습니다');
     }
@@ -489,25 +445,14 @@ export async function runAutoSelectUS(ctx?: AccountContext): Promise<void> {
     const commonConfig = ctx ? store.getTradingConfig<ReturnType<typeof getCommonConfig>>() : getCommonConfig();
     if (!commonConfig) return;
 
-    const isV2 = isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2');
-    const isV2_1 = isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2_1');
-    if (!isV2 && !isV2_1) return;
+    if (!isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2')) return;
 
-    if (isV2_1) {
-      const rdConfig = store.getStrategyConfig<RealtimeDdsobV2_1Config & { autoSelectConfigUS?: AutoSelectConfigV2_1 }>('overseas', 'realtimeDdsobV2_1');
-      if (!rdConfig?.autoSelectEnabledUS) return;
-      const autoConfigV2_1 = rdConfig.autoSelectConfigUS;
-      if (!autoConfigV2_1) return;
-      if (autoConfigV2_1.principalMode === 'manual' && !autoConfigV2_1.principalPerTicker) return;
-      await processAutoSelectStocksV2_1US(autoConfigV2_1, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
-    } else {
-      const rdConfig = store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
-      if (!rdConfig?.autoSelectEnabled) return;
-      const autoConfigUS = rdConfig.autoSelectConfig as unknown as AutoSelectConfigUS;
-      if (!autoConfigUS) return;
-      if (autoConfigUS.principalMode === 'manual' && !autoConfigUS.principalPerTicker) return;
-      await processAutoSelectStocksUS(autoConfigUS, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
-    }
+    const rdConfig = store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
+    if (!rdConfig?.autoSelectEnabledUS) return;
+    const autoConfigUS = rdConfig.autoSelectConfigUS as AutoSelectConfig | undefined;
+    if (!autoConfigUS) return;
+    if (autoConfigUS.principalMode === 'manual' && !autoConfigUS.principalPerTicker) return;
+    await processAutoSelectStocksUS(autoConfigUS, rdConfig as unknown as Record<string, unknown>, undefined, ctx);
 
     console.log('[AutoSelect:US] Trigger completed');
   } catch (error) {
@@ -623,14 +568,7 @@ export async function processAutoSelectStocks(
   }
 
   const amountPerRound = principalPerTicker / splitCount;
-  const ascendingSplit = autoConfig.ascendingSplit === true;
-  const defaultPriceLimit = ascendingSplit
-    ? getAscendingMaxPrice(principalPerTicker, splitCount, 5)
-    : amountPerRound;
-  const priceLimit = maxStockPrice > 0 ? maxStockPrice : defaultPriceLimit;
-  if (ascendingSplit) {
-    console.log(`[AutoSelect] 점증분할 가격필터: ${Math.round(defaultPriceLimit)}원 (균등: ${Math.round(amountPerRound)}원)`);
-  }
+  const priceLimit = maxStockPrice > 0 ? maxStockPrice : amountPerRound;
 
   // 종목 선별
   let selected: Array<{ ticker: string; name: string; price: number }> = [];
@@ -819,7 +757,7 @@ export async function processAutoSelectStocks(
     ...(autoConfig.peakCheckCandles !== undefined && { peakCheckCandles: autoConfig.peakCheckCandles }),
     selectionMode: autoConfig.selectionMode,
     ...(autoConfig.conditionName && { conditionName: autoConfig.conditionName }),
-    ...(autoConfig.ascendingSplit && { ascendingSplit: true }),
+    ...(autoConfig.ascendingSplit !== undefined && { ascendingSplit: autoConfig.ascendingSplit }),
   }));
 
   let updatedTickers = mode === 'refill'
@@ -872,7 +810,7 @@ export async function processAutoSelectStocks(
 // ==================== 해외 인기종목 자동선별 ====================
 
 export async function processAutoSelectStocksUS(
-  autoConfigUS: AutoSelectConfigUS,
+  autoConfigUS: AutoSelectConfig,
   rdConfig: Record<string, unknown>,
   options?: { mode?: 'full' | 'refill' },
   ctx?: AccountContext,
@@ -1036,17 +974,25 @@ export async function processAutoSelectStocksUS(
   }
 
   const amountPerRound = principalPerTicker / autoConfigUS.splitCount;
+  const priceLimit = (autoConfigUS.maxStockPrice ?? 0) > 0 ? autoConfigUS.maxStockPrice! : amountPerRound;
 
   // 필터 + 정렬: 거래대금 내림차순
   const candidates = allStocks
     .filter(s => s.price > 0)
-    .filter(s => s.price <= amountPerRound)
+    .filter(s => s.price <= priceLimit)
     .filter(s => s.rate >= MIN_CHANGE_RATE)
     .filter(s => !excludeTickers.has(s.ticker))
     .sort((a, b) => b.tamt - a.tamt);
 
-  const selected = candidates.slice(0, slotsToFill);
-  console.log(`[AutoSelect:US] ${allStocks.length} total → ${candidates.length} after filters → ${selected.length} selected`);
+  console.log(`[AutoSelect:US] ${allStocks.length} total → ${candidates.length} after basic filters`);
+
+  // 스프레드 필터 적용 (국내와 동일 로직)
+  const selected = await selectWithSpreadFilterUS(
+    candidates, slotsToFill, autoConfigUS.profitPercent,
+    kisClient, credentials.appKey, credentials.appSecret, accessToken,
+    amountPerRound, autoConfigUS.spreadFilterEnabled !== false
+  );
+  console.log(`[AutoSelect:US] ${candidates.length} candidates → ${selected.length} selected (spread filter)`);
 
   if (selected.length === 0) {
     console.log(`[AutoSelect:US] No stocks selected`);
@@ -1073,6 +1019,7 @@ export async function processAutoSelectStocksUS(
     ...(autoConfigUS.minDropPercent !== undefined && { minDropPercent: autoConfigUS.minDropPercent }),
     ...(autoConfigUS.peakCheckCandles !== undefined && { peakCheckCandles: autoConfigUS.peakCheckCandles }),
     selectionMode: autoConfigUS.selectionMode || 'tradingAmount',
+    ...(autoConfigUS.ascendingSplit !== undefined && { ascendingSplit: autoConfigUS.ascendingSplit }),
   }));
 
   let updatedTickers = mode === 'refill'
@@ -1109,255 +1056,6 @@ export async function processAutoSelectStocksUS(
 
   const selectedNames = selected.map((s, i) => `${i + 1}. ${s.name}(${s.ticker}) $${principalPerTicker}`).join('\n');
   console.log(`[AutoSelect:US] ${mode === 'refill' ? 'Refill' : 'Selected'} ${selected.length} stocks:\n${selectedNames}`);
-
-  return newAutoTickers;
-}
-
-// ==================== v2.1 해외 인기종목 자동선별 ====================
-
-export async function processAutoSelectStocksV2_1US(
-  autoConfig: AutoSelectConfigV2_1,
-  rdConfig: Record<string, unknown>,
-  options?: { mode?: 'full' | 'refill' },
-  ctx?: AccountContext,
-): Promise<RealtimeDdsobV2TickerConfig[]> {
-  const store = ctx?.store ?? localStore;
-  const mode = options?.mode || 'full';
-  const { stockCount, principalMode } = autoConfig;
-
-  console.log(`[AutoSelect:V2.1:US] Processing: mode=${mode}, count=${stockCount}, principalMode=${principalMode}`);
-
-  // 자격증명 & 토큰
-  const { credentials, kisClient } = getCredentialsAndClient(ctx);
-  let accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient);
-
-  // 기존 종목 확인 (중복 방지)
-  const existingTickers = extractTickerConfigsV2(rdConfig);
-  const manualTickers = new Set(existingTickers.filter((t: RealtimeDdsobV2TickerConfig) => !t.autoSelected && t.market === 'overseas').map((t: RealtimeDdsobV2TickerConfig) => t.ticker));
-  const existingAutoTickers = existingTickers.filter((t: RealtimeDdsobV2TickerConfig) => t.autoSelected && t.market === 'overseas');
-  const excludeTickers = new Set([...Array.from(manualTickers), ...(mode === 'refill' ? existingAutoTickers.map(t => t.ticker) : [])]);
-  for (const t of getOccupiedTickersExcluding('overseas', 'realtimeDdsobV2_1')) excludeTickers.add(t);
-
-  const slotsToFill = mode === 'refill' ? stockCount - existingAutoTickers.length : stockCount;
-  if (slotsToFill <= 0) {
-    console.log(`[AutoSelect:V2.1:US] No empty slots to fill`);
-    return [];
-  }
-
-  console.log(`[AutoSelect:V2.1:US] mode=${mode}, slotsToFill=${slotsToFill}, excludeTickers=${Array.from(excludeTickers).join(',')}`);
-
-  // 1단계: 거래대금 순위 조회 (NAS/NYS/AMS)
-  const US_EXCHANGES = ['NAS', 'NYS', 'AMS'];
-  let allStocks: Array<{ ticker: string; name: string; price: number; tamt: number; rate: number; excd: string }> = [];
-  let tokenRefreshed = false;
-
-  for (const excd of US_EXCHANGES) {
-    try {
-      const resp = await kisClient.getOverseasTradingAmountRanking(
-        credentials.appKey, credentials.appSecret, accessToken, excd
-      );
-      if (resp.rt_cd === '0' && resp.output2) {
-        const parsed = resp.output2
-          .filter(item => item.e_ordyn === '1' || item.e_ordyn === 'Y' || item.e_ordyn === '○')
-          .map(item => ({
-            ticker: item.symb,
-            name: item.name.trim() || item.ename.trim(),
-            price: parseFloat(item.last),
-            tamt: parseFloat(item.tamt),
-            rate: parseFloat(item.rate),
-            excd: item.excd || excd,
-          }));
-        allStocks.push(...parsed);
-        console.log(`[AutoSelect:V2.1:US] ${excd}: ${parsed.length} stocks from trading amount ranking`);
-      }
-    } catch (err) {
-      if (!tokenRefreshed && isTokenExpiredError(err)) {
-        accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
-        tokenRefreshed = true;
-        try {
-          const retryResp = await kisClient.getOverseasTradingAmountRanking(
-            credentials.appKey, credentials.appSecret, accessToken, excd
-          );
-          if (retryResp.rt_cd === '0' && retryResp.output2) {
-            const parsed = retryResp.output2
-              .filter(item => item.e_ordyn === '1' || item.e_ordyn === 'Y' || item.e_ordyn === '○')
-              .map(item => ({
-                ticker: item.symb,
-                name: item.name.trim() || item.ename.trim(),
-                price: parseFloat(item.last),
-                tamt: parseFloat(item.tamt),
-                rate: parseFloat(item.rate),
-                excd: item.excd || excd,
-              }));
-            allStocks.push(...parsed);
-          }
-        } catch (retryErr) {
-          console.error(`[AutoSelect:V2.1:US] ${excd} ranking error after token refresh:`, retryErr);
-        }
-      } else {
-        console.error(`[AutoSelect:V2.1:US] ${excd} ranking error:`, err);
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 300));
-  }
-
-  // 투자원금 결정
-  let principalPerTicker: number;
-  const firstExcd = 'NAS';
-  let buyableResp;
-  try {
-    buyableResp = await kisClient.getBuyableAmount(
-      credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
-      'AAPL', 1, firstExcd
-    );
-  } catch (err) {
-    if (!tokenRefreshed && isTokenExpiredError(err)) {
-      accessToken = await getOrRefreshToken('', ctx?.accountId ?? config.accountId, credentials, kisClient, true);
-      tokenRefreshed = true;
-      buyableResp = await kisClient.getBuyableAmount(
-        credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
-        'AAPL', 1, firstExcd
-      );
-    } else {
-      throw err;
-    }
-  }
-  const availableCash = buyableResp.output?.ord_psbl_frcr_amt
-    ? parseFloat(buyableResp.output.ord_psbl_frcr_amt)
-    : 0;
-  if (availableCash <= 0) {
-    console.log(`[AutoSelect:V2.1:US] No available USD cash`);
-    return [];
-  }
-
-  const manualPrincipalSum = existingTickers
-    .filter((t: RealtimeDdsobV2TickerConfig) => !t.autoSelected && t.market === 'overseas')
-    .reduce((sum: number, t: RealtimeDdsobV2TickerConfig) => sum + (t.principal || 0), 0);
-
-  let activeAutoCashReserved = 0;
-  if (mode === 'refill' && existingAutoTickers.length > 0) {
-    for (const t of existingAutoTickers) {
-      const state = store.getState<Record<string, unknown>>('realtimeDdsobV2State', t.ticker);
-      if (state) {
-        const reserved = ((state.principal as number) || 0) - ((state.totalBuyAmount as number) || 0) + ((state.totalSellAmount as number) || 0);
-        activeAutoCashReserved += Math.max(0, reserved);
-      } else {
-        activeAutoCashReserved += t.principal || 0;
-      }
-    }
-  }
-
-  const cashForNewSlots = availableCash - manualPrincipalSum - activeAutoCashReserved;
-  if (cashForNewSlots <= 0) {
-    console.log(`[AutoSelect:V2.1:US] No cash for new slots`);
-    return [];
-  }
-
-  const divisor = mode === 'refill' ? slotsToFill : stockCount;
-  const maxPrincipalPerSlot = Math.floor(cashForNewSlots / divisor);
-
-  if (principalMode === 'auto') {
-    principalPerTicker = maxPrincipalPerSlot;
-  } else {
-    principalPerTicker = Math.min(autoConfig.principalPerTicker, maxPrincipalPerSlot);
-  }
-  console.log(`[AutoSelect:V2.1:US] principal: $${principalPerTicker} (cash=$${availableCash}, mode=${principalMode})`);
-  await new Promise(resolve => setTimeout(resolve, 300));
-
-  if (principalPerTicker <= 0) {
-    console.log(`[AutoSelect:V2.1:US] principalPerTicker is 0`);
-    return [];
-  }
-
-  const amountPerRound = principalPerTicker / autoConfig.splitCount;
-  const priceMin = autoConfig.priceMin ?? 5;
-  const priceMax = autoConfig.priceMax ?? 1000;
-  const changeRateMin = autoConfig.changeRateMin ?? 1;
-  const changeRateMax = autoConfig.changeRateMax ?? 20;
-
-  // 2단계: 가격/등락률 기본 필터
-  const basicFiltered = allStocks
-    .filter(s => s.price > 0)
-    .filter(s => s.price <= amountPerRound)
-    .filter(s => s.price >= priceMin && s.price <= priceMax)
-    .filter(s => s.rate >= changeRateMin && s.rate <= changeRateMax)
-    .filter(s => !excludeTickers.has(s.ticker))
-    .sort((a, b) => b.tamt - a.tamt);
-
-  console.log(`[AutoSelect:V2.1:US] ${allStocks.length} total → ${basicFiltered.length} after basic filters (price $${priceMin}~$${priceMax}, rate ${changeRateMin}~${changeRateMax}%)`);
-
-  // 3단계: 지표 필터 (EMA/RSI)
-  let selected: typeof basicFiltered;
-  if (autoConfig.indicatorFilterEnabled !== false) {
-    selected = await applyIndicatorFiltersUS(
-      basicFiltered, autoConfig, kisClient,
-      credentials.appKey, credentials.appSecret, accessToken,
-      slotsToFill
-    );
-  } else {
-    selected = basicFiltered.slice(0, slotsToFill);
-  }
-
-  if (selected.length === 0) {
-    console.log(`[AutoSelect:V2.1:US] No stocks selected`);
-    return [];
-  }
-
-  // config 업데이트
-  const manualTickerConfigs = existingTickers.filter((t: RealtimeDdsobV2TickerConfig) => !t.autoSelected || t.market !== 'overseas');
-  const newAutoTickers: RealtimeDdsobV2TickerConfig[] = selected.map(s => ({
-    ticker: s.ticker,
-    market: 'overseas' as MarketType,
-    stockName: s.name,
-    principal: principalPerTicker,
-    splitCount: autoConfig.splitCount,
-    profitPercent: autoConfig.profitPercent,
-    forceSellCandles: autoConfig.forceSellCandles,
-    intervalMinutes: autoConfig.intervalMinutes,
-    autoSelected: true,
-    autoStopLoss: autoConfig.autoStopLoss ?? true,
-    stopLossPercent: autoConfig.stopLossPercent ?? -5,
-    exchangeCode: s.excd,
-    ...(autoConfig.exhaustionStopLoss !== undefined && { exhaustionStopLoss: autoConfig.exhaustionStopLoss }),
-    ...(autoConfig.exhaustionStopLossPercent !== undefined && { exhaustionStopLossPercent: autoConfig.exhaustionStopLossPercent }),
-    ...(autoConfig.minDropPercent !== undefined && { minDropPercent: autoConfig.minDropPercent }),
-    ...(autoConfig.peakCheckCandles !== undefined && { peakCheckCandles: autoConfig.peakCheckCandles }),
-    ...(autoConfig.ascendingSplit !== undefined && { ascendingSplit: autoConfig.ascendingSplit }),
-  }));
-
-  let updatedTickers = mode === 'refill'
-    ? [...manualTickerConfigs, ...existingAutoTickers, ...newAutoTickers]
-    : [...manualTickerConfigs, ...newAutoTickers];
-
-  // 방어: US autoSelected 종목 수가 stockCount를 초과하지 않도록
-  const autoInUpdated = updatedTickers.filter(t => t.autoSelected && t.market === 'overseas');
-  if (autoInUpdated.length > stockCount) {
-    const nonAutoUS = updatedTickers.filter(t => !(t.autoSelected && t.market === 'overseas'));
-    updatedTickers = [...nonAutoUS, ...autoInUpdated.slice(0, stockCount)];
-  }
-
-  // 동시 실행 방어
-  if (mode === 'refill') {
-    const freshConfig = store.getStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1');
-    if (freshConfig) {
-      const freshTickers = extractTickerConfigsV2(freshConfig as unknown as Record<string, unknown>);
-      const freshAutoCount = freshTickers.filter(t => t.autoSelected && t.market === 'overseas').length;
-      if (freshAutoCount >= stockCount) {
-        console.log(`[AutoSelect:V2.1:US] Concurrent refill detected, skipping write`);
-        return [];
-      }
-    }
-  }
-
-  // config 저장
-  const currentConfig = store.getStrategyConfig<Record<string, unknown>>('overseas', 'realtimeDdsobV2_1') || {};
-  store.setStrategyConfig('overseas', 'realtimeDdsobV2_1', {
-    ...currentConfig,
-    tickers: updatedTickers,
-  });
-
-  const selectedNames = selected.map((s, i) => `${i + 1}. ${s.name}(${s.ticker}) $${principalPerTicker}`).join('\n');
-  console.log(`[AutoSelect:V2.1:US] ${mode === 'refill' ? 'Refill' : 'Selected'} ${selected.length} stocks:\n${selectedNames}`);
 
   return newAutoTickers;
 }
@@ -1439,37 +1137,16 @@ export async function processAutoSelectEOD(
 
           console.log(`[EOD:${tag}] ${ticker} EOD sell confirmed: ${filledQty}주 @ $${filledPrice} (ODNO=${state.eodSellOrderNo})`);
 
-          store.addCycleHistory({
-            ticker, market, strategy: strategyId,
-            stockName: tc.stockName || ticker,
-            cycleNumber: (state.cycleNumber as number) || 1,
-            autoSelected: isAutoSelected, dailyCycle: true,
+          store.addCycleHistory(buildCycleHistoryData(state, {
+            strategy: strategyId,
+            autoSelected: isAutoSelected,
+            dailyCycle: true,
             eodAction: isAutoSelected ? 'market_sell' : 'manual_eod_sell',
-            startedAt: state.startedAt,
-            completedAt: new Date().toISOString(),
-            principal: tc.principal, splitCount: tc.splitCount, profitPercent: tc.profitPercent,
-            amountPerRound: state.amountPerRound,
-            forceSellCandles: tc.forceSellCandles, intervalMinutes: tc.intervalMinutes,
-            minDropPercent: (state.minDropPercent as number) || 0,
-            peakCheckCandles: (state.peakCheckCandles as number) ?? 0,
-            bufferPercent: 0.01,
-            autoStopLoss: state.autoStopLoss || false,
-            stopLossPercent: (state.stopLossPercent as number) ?? -5,
-            exhaustionStopLoss: state.exhaustionStopLoss || false,
-            exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
-            exchangeCode: state.exchangeCode || '',
-            selectionMode: state.selectionMode || '',
-            conditionName: state.conditionName || '',
-            totalBuyAmount: (state.totalBuyAmount as number) || 0,
             totalSellAmount: ((state.totalSellAmount as number) || 0) + filledAmount,
             totalRealizedProfit: actualProfit,
             finalProfitRate: tc.principal > 0 ? actualProfit / tc.principal : 0,
-            maxRoundsAtEnd: (state.maxRounds as number) || tc.splitCount,
-            totalForceSellCount: (state.totalForceSellCount as number) || 0,
-            totalForceSellLoss: (state.totalForceSellLoss as number) || 0,
             eodSoldQuantity: filledQty,
-            candlesSinceCycleStart: (state.candlesSinceCycleStart as number) || 0,
-          });
+          }));
 
           eodResults.push({ ticker, name: tc.stockName || ticker, soldQty: filledQty, profit: actualProfit, isAutoSelected });
           store.deleteState('realtimeDdsobV2State', ticker);
@@ -1566,37 +1243,16 @@ export async function processAutoSelectEOD(
         const estimatedSellPrice = (state.previousPrice as number) || 0;
         const estimatedProfit = ((state.totalRealizedProfit as number) || 0) + (estimatedSellPrice * totalQty - totalBuyAmount);
 
-        store.addCycleHistory({
-          ticker, market, strategy: strategyId,
-          stockName: tc.stockName || ticker,
-          cycleNumber: (state.cycleNumber as number) || 1,
-          autoSelected: isAutoSelected, dailyCycle: true,
+        store.addCycleHistory(buildCycleHistoryData(state, {
+          strategy: strategyId,
+          autoSelected: isAutoSelected,
+          dailyCycle: true,
           eodAction: isAutoSelected ? 'market_sell' : 'manual_eod_sell',
-          startedAt: state.startedAt,
-          completedAt: new Date().toISOString(),
-          principal: tc.principal, splitCount: tc.splitCount, profitPercent: tc.profitPercent,
-          amountPerRound: state.amountPerRound,
-          forceSellCandles: tc.forceSellCandles, intervalMinutes: tc.intervalMinutes,
-          minDropPercent: (state.minDropPercent as number) || 0,
-          peakCheckCandles: (state.peakCheckCandles as number) ?? 0,
-          bufferPercent: 0.01,
-          autoStopLoss: state.autoStopLoss || false,
-          stopLossPercent: (state.stopLossPercent as number) ?? -5,
-          exhaustionStopLoss: state.exhaustionStopLoss || false,
-          exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
-          exchangeCode: state.exchangeCode || '',
-          selectionMode: state.selectionMode || '',
-          conditionName: state.conditionName || '',
-          totalBuyAmount: (state.totalBuyAmount as number) || 0,
           totalSellAmount: ((state.totalSellAmount as number) || 0) + estimatedSellPrice * totalQty,
           totalRealizedProfit: estimatedProfit,
           finalProfitRate: tc.principal > 0 ? estimatedProfit / tc.principal : 0,
-          maxRoundsAtEnd: (state.maxRounds as number) || tc.splitCount,
-          totalForceSellCount: (state.totalForceSellCount as number) || 0,
-          totalForceSellLoss: (state.totalForceSellLoss as number) || 0,
           eodSoldQuantity: totalQty,
-          candlesSinceCycleStart: (state.candlesSinceCycleStart as number) || 0,
-        });
+        }));
 
         eodResults.push({ ticker, name: tc.stockName || ticker, soldQty: totalQty, profit: estimatedProfit, isAutoSelected });
         store.deleteState('realtimeDdsobV2State', ticker);

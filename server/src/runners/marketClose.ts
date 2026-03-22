@@ -39,7 +39,7 @@ interface RealtimeDdsobV2TickerConfig {
   exchangeCode?: string;
   selectionMode?: string;
   conditionName?: string;
-  ascendingSplit?: boolean;
+  ascendingSplit?: boolean | 'reverse';
 }
 
 function extractTickerConfigsV2(rdConfig: Record<string, any>): RealtimeDdsobV2TickerConfig[] {

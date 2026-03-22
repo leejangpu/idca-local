@@ -165,23 +165,28 @@ export function getAscendingAmountForRound(
   roundIndex: number,
   buyPrice: number,
   minOrderAmount: number = 0,
+  reverse: boolean = false,
 ): number {
   if (splitCount <= 0 || roundIndex < 0 || roundIndex >= splitCount) {
     return principal / Math.max(splitCount, 1);
   }
 
+  // reverse: 첫 회차가 가장 크고 뒤로 갈수록 작아짐 (인덱스 뒤집기)
+  const effectiveIndex = reverse ? (splitCount - 1 - roundIndex) : roundIndex;
+
   const equalAmount = principal / splitCount;
-  const weight = Math.pow(2, roundIndex);
+  const weight = Math.pow(2, effectiveIndex);
   const weightSum = Math.pow(2, splitCount) - 1;
 
   if (minOrderAmount > 0) {
     // 소수점 매수 가능한 경우: 원금 전체를 가중치로 배분
-    // 최소주문금액 미달 회차는 minOrderAmount로 보정, 초과분은 후반 회차에서 차감
+    // 최소주문금액 미달 회차는 minOrderAmount로 보정, 초과분은 큰 회차에서 차감
     const rawAmounts: number[] = [];
     for (let i = 0; i < splitCount; i++) {
-      rawAmounts.push(principal * Math.pow(2, i) / weightSum);
+      const idx = reverse ? (splitCount - 1 - i) : i;
+      rawAmounts.push(principal * Math.pow(2, idx) / weightSum);
     }
-    // 최소주문금액 보정: 미달 회차를 올리고 초과분을 후반에서 차감
+    // 최소주문금액 보정: 미달 회차를 올리고 초과분은 큰 회차에서 차감
     let deficit = 0;
     for (let i = 0; i < splitCount; i++) {
       if (rawAmounts[i] < minOrderAmount) {
@@ -189,12 +194,14 @@ export function getAscendingAmountForRound(
         rawAmounts[i] = minOrderAmount;
       }
     }
-    // 후반 회차(큰 순서)에서 deficit 차감
-    for (let i = splitCount - 1; i >= 0 && deficit > 0; i--) {
-      const canDeduct = rawAmounts[i] - minOrderAmount;
+    // 큰 금액 회차(역순)에서 deficit 차감
+    const sortedIndices = [...Array(splitCount).keys()].sort((a, b) => rawAmounts[b] - rawAmounts[a]);
+    for (const idx of sortedIndices) {
+      if (deficit <= 0) break;
+      const canDeduct = rawAmounts[idx] - minOrderAmount;
       if (canDeduct > 0) {
         const deduct = Math.min(canDeduct, deficit);
-        rawAmounts[i] -= deduct;
+        rawAmounts[idx] -= deduct;
         deficit -= deduct;
       }
     }
@@ -216,20 +223,6 @@ export function getAscendingAmountForRound(
   return buyPrice + remaining * weight / weightSum;
 }
 
-/**
- * 점증 분할 가격 필터 상한가
- *
- * 마지막 회차가 첫 회차의 minLastRatio배 이상 매수 가능하도록
- * maxPrice = principal / (splitCount + (minLastRatio - 1) × 2)
- */
-export function getAscendingMaxPrice(
-  principal: number,
-  splitCount: number,
-  minLastRatio: number = 5,
-): number {
-  const weightConstant = 2; // 급경사 모드: w_sum/w_max ≈ 2
-  return Math.floor(principal / (splitCount + (minLastRatio - 1) * weightConstant));
-}
 
 // ==================== 주문 생성 함수 ====================
 

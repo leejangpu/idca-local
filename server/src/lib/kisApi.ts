@@ -294,6 +294,27 @@ export interface DomesticAskingPriceResponse {
   };
 }
 
+// 해외주식 호가 응답
+export interface OverseasAskingPriceResponse {
+  rt_cd: string;
+  msg_cd: string;
+  msg1: string;
+  output1?: {
+    last: string;           // 현재가
+    base: string;           // 전일종가
+    bvol: string;           // 매수호가총잔량
+    avol: string;           // 매도호가총잔량
+    [key: string]: string;
+  };
+  output2?: Array<{
+    pask1: string;          // 매도호가가격1
+    pbid1: string;          // 매수호가가격1
+    vask1: string;          // 매도호가잔량1
+    vbid1: string;          // 매수호가잔량1
+    [key: string]: string;
+  }>;
+}
+
 // 국내주식 잔고 응답
 export interface DomesticBalanceResponse {
   rt_cd: string;
@@ -1264,6 +1285,47 @@ export class KisApiClient {
 
       return response.json();
     }, `DomesticAskingPrice:${ticker}`);
+  }
+
+  /**
+   * 해외주식 현재가 호가 [해외주식-033]
+   * TR_ID: HHDFS76200100
+   * 미국 거래소 10호가, 그 외 1호가
+   */
+  async getOverseasAskingPrice(
+    appKey: string,
+    appSecret: string,
+    accessToken: string,
+    ticker: string,
+    exchange: string
+  ): Promise<OverseasAskingPriceResponse> {
+    return this.withRetry(async () => {
+      const response = await fetch(
+        `${this.baseUrl}/uapi/overseas-price/v1/quotations/inquire-asking-price?` +
+          new URLSearchParams({
+            AUTH: '',
+            EXCD: exchange,
+            SYMB: ticker,
+          }),
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            authorization: `Bearer ${accessToken}`,
+            appkey: appKey,
+            appsecret: appSecret,
+            tr_id: 'HHDFS76200100',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Overseas asking price request failed: ${response.status} - ${errorBody}`);
+      }
+
+      return response.json();
+    }, `OverseasAskingPrice:${ticker}`);
   }
 
   /**
