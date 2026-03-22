@@ -10,12 +10,14 @@
  *
  * KIS WebSocket 스펙:
  * - 실시간 체결가(통합): TR_ID=H0UNCNT0, ws://ops.koreainvestment.com:21000
+ * - 실시간 호가(통합): TR_ID=H0UNASP0 (동일 커넥션)
+ * - 실시간 체결통보: TR_ID=H0STCNI0 (동일 커넥션, AES256 암호화)
  * - approval_key: /oauth2/Approval API로 발급
- * - 체결가 데이터에 현재가/매도1호가/매수1호가/매수잔량1 모두 포함
  * - 최대 40종목 동시 구독
  */
 
 import WebSocket from 'ws';
+import crypto from 'crypto';
 import { type AccountContext } from './accountContext';
 import { getOrRefreshToken } from './kisApi';
 
@@ -38,7 +40,34 @@ export interface TickData {
   timestamp: number;        // 수신 시각 (Date.now())
 }
 
+/** 종목별 호가 스냅샷 (H0UNASP0) */
+export interface OrderbookData {
+  ticker: string;
+  askPrices: number[];      // 매도호가 1~10
+  bidPrices: number[];      // 매수호가 1~10
+  askQtys: number[];        // 매도호가 잔량 1~10
+  bidQtys: number[];        // 매수호가 잔량 1~10
+  totalAskQty: number;      // 총 매도호가 잔량
+  totalBidQty: number;      // 총 매수호가 잔량
+  timestamp: number;
+}
+
+/** 체결통보 (H0STCNI0) */
+export interface ExecutionNotification {
+  orderNo: string;          // 주문번호 (ODER_NO)
+  ticker: string;           // 종목코드 (STCK_SHRN_ISCD)
+  side: '01' | '02';       // 01=매도, 02=매수 (SELN_BYOV_CLS)
+  filledQty: number;        // 체결수량 (CNTG_QTY)
+  filledPrice: number;      // 체결단가 (CNTG_UNPR)
+  orderQty: number;         // 주문수량 (ODER_QTY)
+  orderPrice: number;       // 주문가격 (ODER_PRC)
+  status: 'accepted' | 'filled' | 'rejected';  // CNTG_YN 기반
+  timestamp: number;
+}
+
 export type TickCallback = (tick: TickData) => void;
+export type OrderbookCallback = (ob: OrderbookData) => void;
+export type ExecutionCallback = (exec: ExecutionNotification) => void;
 
 export interface MarketDataProvider {
   /** 종목 구독 (실시간 시세 수신 시작) */
@@ -63,6 +92,24 @@ export interface MarketDataProvider {
   getFallbackDurationMs(): number;
   /** WS 복구 직후 warm-up 중인지 (정상 tick 수신 확인 구간) */
   isWarmingUp(): boolean;
+
+  // --- 호가 (H0UNASP0) ---
+  /** 호가 구독 */
+  subscribeOrderbook(ticker: string): void;
+  /** 호가 구독 해제 */
+  unsubscribeOrderbook(ticker: string): void;
+  /** 최신 호가 캐시 */
+  getLatestOrderbook(ticker: string): OrderbookData | null;
+  /** 호가 수신 콜백 */
+  onOrderbook(callback: OrderbookCallback): void;
+
+  // --- 체결통보 (H0STCNI0) ---
+  /** 체결통보 구독 (HTS ID 기반) */
+  subscribeExecution(htsId: string): void;
+  /** 체결통보 구독 해제 */
+  unsubscribeExecution(htsId: string): void;
+  /** 체결통보 수신 콜백 */
+  onExecution(callback: ExecutionCallback): void;
 }
 
 // ========================================
@@ -131,6 +178,15 @@ export class RestMarketDataProvider implements MarketDataProvider {
     console.log(`${TAG} [REST] Provider stopped`);
   }
 
+  // REST provider: 호가/체결통보는 no-op
+  subscribeOrderbook(_ticker: string): void { /* no-op */ }
+  unsubscribeOrderbook(_ticker: string): void { /* no-op */ }
+  getLatestOrderbook(_ticker: string): OrderbookData | null { return null; }
+  onOrderbook(_callback: OrderbookCallback): void { /* no-op */ }
+  subscribeExecution(_htsId: string): void { /* no-op */ }
+  unsubscribeExecution(_htsId: string): void { /* no-op */ }
+  onExecution(_callback: ExecutionCallback): void { /* no-op */ }
+
   private async pollAll(): Promise<void> {
     if (this.subscriptions.size === 0) return;
 
@@ -173,17 +229,14 @@ export class RestMarketDataProvider implements MarketDataProvider {
 }
 
 // ========================================
-// 2. WebSocket Provider (실시간 체결가)
+// 2. WebSocket Provider (멀티 TR_ID)
 // ========================================
 
 /**
- * KIS WebSocket 실시간 체결가(H0UNCNT0) 프로바이더.
+ * KIS WebSocket 프로바이더 — H0UNCNT0(체결가) + H0UNASP0(호가) + H0STCNI0(체결통보).
  *
- * 체결가 데이터에 현재가/매도1호가/매수1호가/잔량이 모두 포함되어
- * 호가 구독 없이 체결가만으로 충분.
- *
- * 데이터 형식: 헤더|body (파이프 구분)
- * body 내부: ^(캐럿) 구분 필드
+ * 동일 WS 커넥션에서 tr_id 필드로 구분하여 멀티 구독.
+ * H0STCNI0는 AES256-CBC 암호화 → 구독 응답에서 iv/key를 추출하여 복호화.
  */
 export class WebSocketMarketDataProvider implements MarketDataProvider {
   readonly type = 'websocket' as const;
@@ -195,7 +248,7 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
   private approvalKey: string | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
-  private pendingSubscribes: string[] = [];
+  private pendingSubscribes: Array<{ trId: string; trKey: string }> = [];
 
   // REST fallback: WebSocket이 안 될 때 사용
   private restFallback: RestMarketDataProvider;
@@ -205,6 +258,17 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
   // warm-up: fallback 종료 후 정상 tick 수신 확인 구간
   private warmupUntil: number | null = null;
   private warmupDurationMs = 5_000;
+
+  // --- 호가 (H0UNASP0) ---
+  private orderbookSubscriptions = new Set<string>();
+  private orderbookCache = new Map<string, OrderbookData>();
+  private orderbookCallbacks: OrderbookCallback[] = [];
+
+  // --- 체결통보 (H0STCNI0) ---
+  private executionSubscriptions = new Set<string>();  // HTS IDs
+  private executionCallbacks: ExecutionCallback[] = [];
+  private aesKey: string | null = null;
+  private aesIv: string | null = null;
 
   constructor(ctx: AccountContext) {
     this.ctx = ctx;
@@ -224,9 +288,9 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
       return;
     }
     if (this.ws?.readyState === WebSocket.OPEN && this.approvalKey) {
-      this.sendSubscribe(ticker);
+      this.sendSubscribeMsg('H0UNCNT0', ticker);
     } else {
-      this.pendingSubscribes.push(ticker);
+      this.pendingSubscribes.push({ trId: 'H0UNCNT0', trKey: ticker });
     }
   }
 
@@ -238,8 +302,54 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
       return;
     }
     if (this.ws?.readyState === WebSocket.OPEN && this.approvalKey) {
-      this.sendUnsubscribe(ticker);
+      this.sendUnsubscribeMsg('H0UNCNT0', ticker);
     }
+  }
+
+  subscribeOrderbook(ticker: string): void {
+    this.orderbookSubscriptions.add(ticker);
+    if (this.usingFallback) return;
+    if (this.ws?.readyState === WebSocket.OPEN && this.approvalKey) {
+      this.sendSubscribeMsg('H0UNASP0', ticker);
+    } else {
+      this.pendingSubscribes.push({ trId: 'H0UNASP0', trKey: ticker });
+    }
+  }
+
+  unsubscribeOrderbook(ticker: string): void {
+    this.orderbookSubscriptions.delete(ticker);
+    this.orderbookCache.delete(ticker);
+    if (this.ws?.readyState === WebSocket.OPEN && this.approvalKey) {
+      this.sendUnsubscribeMsg('H0UNASP0', ticker);
+    }
+  }
+
+  getLatestOrderbook(ticker: string): OrderbookData | null {
+    return this.orderbookCache.get(ticker) ?? null;
+  }
+
+  onOrderbook(callback: OrderbookCallback): void {
+    this.orderbookCallbacks.push(callback);
+  }
+
+  subscribeExecution(htsId: string): void {
+    this.executionSubscriptions.add(htsId);
+    if (this.ws?.readyState === WebSocket.OPEN && this.approvalKey) {
+      this.sendSubscribeMsg('H0STCNI0', htsId);
+    } else {
+      this.pendingSubscribes.push({ trId: 'H0STCNI0', trKey: htsId });
+    }
+  }
+
+  unsubscribeExecution(htsId: string): void {
+    this.executionSubscriptions.delete(htsId);
+    if (this.ws?.readyState === WebSocket.OPEN && this.approvalKey) {
+      this.sendUnsubscribeMsg('H0STCNI0', htsId);
+    }
+  }
+
+  onExecution(callback: ExecutionCallback): void {
+    this.executionCallbacks.push(callback);
   }
 
   getSubscriptions(): string[] {
@@ -305,6 +415,11 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
     }
     this.subscriptions.clear();
     this.cache.clear();
+    this.orderbookSubscriptions.clear();
+    this.orderbookCache.clear();
+    this.executionSubscriptions.clear();
+    this.aesKey = null;
+    this.aesIv = null;
     console.log(`${TAG} [WS] Provider stopped`);
   }
 
@@ -347,14 +462,20 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
         console.log(`${TAG} [WS] Connected`);
 
         // 대기 중인 구독 처리
-        for (const ticker of this.pendingSubscribes) {
-          this.sendSubscribe(ticker);
+        for (const { trId, trKey } of this.pendingSubscribes) {
+          this.sendSubscribeMsg(trId, trKey);
         }
         this.pendingSubscribes = [];
 
         // 기존 구독 복구 (재연결 시)
         for (const ticker of this.subscriptions) {
-          this.sendSubscribe(ticker);
+          this.sendSubscribeMsg('H0UNCNT0', ticker);
+        }
+        for (const ticker of this.orderbookSubscriptions) {
+          this.sendSubscribeMsg('H0UNASP0', ticker);
+        }
+        for (const htsId of this.executionSubscriptions) {
+          this.sendSubscribeMsg('H0STCNI0', htsId);
         }
 
         resolve();
@@ -426,9 +547,9 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
     this.restFallback.start();
   }
 
-  // ---- 구독 메시지 전송 ----
+  // ---- 구독 메시지 전송 (일반화) ----
 
-  private sendSubscribe(ticker: string): void {
+  private sendSubscribeMsg(trId: string, trKey: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.approvalKey) return;
 
     const msg = JSON.stringify({
@@ -440,17 +561,17 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
       },
       body: {
         input: {
-          tr_id: 'H0UNCNT0',  // 실시간 체결가(통합)
-          tr_key: ticker,
+          tr_id: trId,
+          tr_key: trKey,
         },
       },
     });
 
     this.ws.send(msg);
-    console.log(`${TAG} [WS] Subscribed: ${ticker}`);
+    console.log(`${TAG} [WS] Subscribed: ${trId}/${trKey}`);
   }
 
-  private sendUnsubscribe(ticker: string): void {
+  private sendUnsubscribeMsg(trId: string, trKey: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.approvalKey) return;
 
     const msg = JSON.stringify({
@@ -462,14 +583,30 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
       },
       body: {
         input: {
-          tr_id: 'H0UNCNT0',
-          tr_key: ticker,
+          tr_id: trId,
+          tr_key: trKey,
         },
       },
     });
 
     this.ws.send(msg);
-    console.log(`${TAG} [WS] Unsubscribed: ${ticker}`);
+    console.log(`${TAG} [WS] Unsubscribed: ${trId}/${trKey}`);
+  }
+
+  // ---- AES256-CBC 복호화 (H0STCNI0) ----
+
+  private decryptAes256Cbc(encrypted: string): string {
+    if (!this.aesKey || !this.aesIv) {
+      throw new Error('AES key/iv not available');
+    }
+    const decipher = crypto.createDecipheriv(
+      'aes-256-cbc',
+      this.aesKey,
+      this.aesIv,
+    );
+    let decrypted = decipher.update(encrypted, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
   }
 
   // ---- 수신 메시지 파싱 ----
@@ -496,6 +633,15 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
         if (msgCd) {
           console.log(`${TAG} [WS] Response: tr_id=${trId} msg=${json.body?.msg1 || msgCd}`);
         }
+        // H0STCNI0 구독 응답에서 AES iv/key 추출
+        if (trId === 'H0STCNI0' && json.body?.output) {
+          const { iv, key } = json.body.output;
+          if (iv && key) {
+            this.aesIv = iv;
+            this.aesKey = key;
+            console.log(`${TAG} [WS] H0STCNI0 AES key/iv acquired`);
+          }
+        }
       } catch {
         // 무시
       }
@@ -508,24 +654,38 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
 
     const encrypted = parts[0];
     const trId = parts[1];
+    const dataStr = parts.slice(3).join('|');
 
-    if (encrypted === '1') {
-      // 암호화 데이터는 현재 미지원 (유료 시세)
-      return;
+    // TR_ID별 dispatch
+    if (trId === 'H0UNCNT0') {
+      if (encrypted === '1') return; // 암호화 미지원
+      this.parseTickData(parts[2], dataStr);
+    } else if (trId === 'H0UNASP0') {
+      if (encrypted === '1') return;
+      this.parseOrderbookData(parts[2], dataStr);
+    } else if (trId === 'H0STCNI0') {
+      // H0STCNI0는 항상 암호화
+      if (encrypted === '1') {
+        try {
+          const decrypted = this.decryptAes256Cbc(dataStr);
+          this.parseExecutionData(parts[2], decrypted);
+        } catch (err) {
+          console.error(`${TAG} [WS] H0STCNI0 decrypt error:`, err);
+        }
+      } else {
+        // 비암호화 (모의투자 등)
+        this.parseExecutionData(parts[2], dataStr);
+      }
     }
+  }
 
-    if (trId !== 'H0UNCNT0') return;
-
-    // 데이터 건수만큼 반복 (보통 1건)
-    const dataCount = parseInt(parts[2], 10) || 1;
-    const dataStr = parts.slice(3).join('|'); // 혹시 데이터 내 | 있을 경우 대비
-
-    // 각 건은 ^로 구분된 필드
+  private parseTickData(countStr: string, dataStr: string): void {
+    const dataCount = parseInt(countStr, 10) || 1;
     const records = dataStr.split('^^');
 
     for (const record of records.slice(0, dataCount)) {
       const fields = record.split('^');
-      if (fields.length < 40) continue; // 최소 필드 수 체크
+      if (fields.length < 40) continue;
 
       // 체결가(H0UNCNT0) 필드 순서 (0-indexed):
       // 0: MKSC_SHRN_ISCD (종목코드)
@@ -553,6 +713,111 @@ export class WebSocketMarketDataProvider implements MarketDataProvider {
       if (tick.currentPrice > 0 && this.subscriptions.has(ticker)) {
         this.cache.set(ticker, tick);
         for (const cb of this.callbacks) cb(tick);
+      }
+    }
+  }
+
+  /**
+   * H0UNASP0 필드 순서 (0-indexed, CSV 스펙 기준):
+   * 0: MKSC_SHRN_ISCD (종목코드)
+   * 1: BSOP_HOUR (영업시간)
+   * 2: HOUR_CLS_CODE (시간구분)
+   * 3~12: ASKP1~ASKP10 (매도호가 1~10)
+   * 13~22: BIDP1~BIDP10 (매수호가 1~10)
+   * 23~32: ASKP_RSQN1~ASKP_RSQN10 (매도잔량 1~10)
+   * 33~42: BIDP_RSQN1~BIDP_RSQN10 (매수잔량 1~10)
+   * 43: TOTAL_ASKP_RSQN (총매도잔량)
+   * 44: TOTAL_BIDP_RSQN (총매수잔량)
+   */
+  private parseOrderbookData(countStr: string, dataStr: string): void {
+    const dataCount = parseInt(countStr, 10) || 1;
+    const records = dataStr.split('^^');
+
+    for (const record of records.slice(0, dataCount)) {
+      const f = record.split('^');
+      if (f.length < 45) continue;
+
+      const ticker = f[0];
+      const askPrices: number[] = [];
+      const bidPrices: number[] = [];
+      const askQtys: number[] = [];
+      const bidQtys: number[] = [];
+
+      for (let i = 0; i < 10; i++) {
+        askPrices.push(parseInt(f[3 + i], 10) || 0);
+        bidPrices.push(parseInt(f[13 + i], 10) || 0);
+        askQtys.push(parseInt(f[23 + i], 10) || 0);
+        bidQtys.push(parseInt(f[33 + i], 10) || 0);
+      }
+
+      const ob: OrderbookData = {
+        ticker,
+        askPrices,
+        bidPrices,
+        askQtys,
+        bidQtys,
+        totalAskQty: parseInt(f[43], 10) || 0,
+        totalBidQty: parseInt(f[44], 10) || 0,
+        timestamp: Date.now(),
+      };
+
+      if (this.orderbookSubscriptions.has(ticker)) {
+        this.orderbookCache.set(ticker, ob);
+        for (const cb of this.orderbookCallbacks) cb(ob);
+      }
+    }
+  }
+
+  /**
+   * H0STCNI0 필드 순서 (0-indexed, CSV 스펙 기준):
+   * 0: CUST_ID (고객ID)
+   * 1: ACNT_NO (계좌번호)
+   * 2: ODER_NO (주문번호)
+   * 3: OODER_NO (원주문번호)
+   * 4: SELN_BYOV_CLS (매도매수구분: 01=매도, 02=매수)
+   * 5: RCTF_CLS (정정구분)
+   * 6: ODER_KIND (주문종류)
+   * 7: ODER_COND (주문조건)
+   * 8: STCK_SHRN_ISCD (종목코드)
+   * 9: CNTG_QTY (체결수량)
+   * 10: CNTG_UNPR (체결단가)
+   * 11: STCK_CNTG_HOUR (체결시간)
+   * 12: RFUS_YN (거부여부)
+   * 13: CNTG_YN (체결여부: 1=접수, 2=체결)
+   * 14: ACPT_YN (접수여부)
+   * 15: BRNC_NO (지점번호)
+   * 16: ODER_QTY (주문수량)
+   * 17: ACNT_NAME (계좌명)
+   * 18: CNTG_ISNM40 (체결종목명)
+   * 19: ODER_PRC (주문가격)
+   */
+  private parseExecutionData(countStr: string, dataStr: string): void {
+    const dataCount = parseInt(countStr, 10) || 1;
+    const records = dataStr.split('^^');
+
+    for (const record of records.slice(0, dataCount)) {
+      const f = record.split('^');
+      if (f.length < 17) continue;
+
+      const cntgYn = f[13];
+      // 체결통보만 처리 (2=체결), 접수통보(1)는 무시
+      if (cntgYn !== '2') continue;
+
+      const exec: ExecutionNotification = {
+        orderNo: f[2],
+        ticker: f[8],
+        side: f[4] as '01' | '02',
+        filledQty: parseInt(f[9], 10) || 0,
+        filledPrice: parseInt(f[10], 10) || 0,
+        orderQty: parseInt(f[16], 10) || 0,
+        orderPrice: f.length > 19 ? (parseInt(f[19], 10) || 0) : 0,
+        status: cntgYn === '2' ? 'filled' : (f[12] === '1' ? 'rejected' : 'accepted'),
+        timestamp: Date.now(),
+      };
+
+      if (exec.filledQty > 0) {
+        console.log(`${TAG} [WS] H0STCNI0 체결: ${exec.side === '01' ? '매도' : '매수'} ${exec.ticker} ${exec.filledQty}주 @${exec.filledPrice} (ODNO=${exec.orderNo})`);
+        for (const cb of this.executionCallbacks) cb(exec);
       }
     }
   }
@@ -697,4 +962,71 @@ export function unsubscribeAllByConsumer(accountId: string, consumer: string): v
 /** 레퍼런스 카운트 전체 초기화 (계좌 단위) */
 export function clearRefs(accountId: string): void {
   refCounts.delete(accountId);
+}
+
+// ========================================
+// 호가 레퍼런스 카운트 구독 관리
+// ========================================
+
+const orderbookRefCounts = new Map<string, Map<string, Set<string>>>();
+
+function getOrderbookRefMap(accountId: string): Map<string, Set<string>> {
+  if (!orderbookRefCounts.has(accountId)) {
+    orderbookRefCounts.set(accountId, new Map());
+  }
+  return orderbookRefCounts.get(accountId)!;
+}
+
+export function subscribeOrderbookWithRef(accountId: string, ticker: string, consumer: string): boolean {
+  const provider = providerRegistry.get(accountId);
+  if (!provider) return false;
+
+  const refs = getOrderbookRefMap(accountId);
+  let consumers = refs.get(ticker);
+  if (!consumers) {
+    consumers = new Set();
+    refs.set(ticker, consumers);
+  }
+
+  const isNew = consumers.size === 0;
+  consumers.add(consumer);
+
+  if (isNew) {
+    provider.subscribeOrderbook(ticker);
+    return true;
+  }
+  return false;
+}
+
+export function unsubscribeOrderbookWithRef(accountId: string, ticker: string, consumer: string): boolean {
+  const refs = getOrderbookRefMap(accountId);
+  const consumers = refs.get(ticker);
+  if (!consumers) return false;
+
+  consumers.delete(consumer);
+
+  if (consumers.size === 0) {
+    refs.delete(ticker);
+    const provider = providerRegistry.get(accountId);
+    if (provider) {
+      provider.unsubscribeOrderbook(ticker);
+      return true;
+    }
+  }
+  return false;
+}
+
+export function unsubscribeAllOrderbookByConsumer(accountId: string, consumer: string): void {
+  const refs = getOrderbookRefMap(accountId);
+  const provider = providerRegistry.get(accountId);
+
+  for (const [ticker, consumers] of refs) {
+    if (consumers.has(consumer)) {
+      consumers.delete(consumer);
+      if (consumers.size === 0) {
+        refs.delete(ticker);
+        provider?.unsubscribeOrderbook(ticker);
+      }
+    }
+  }
 }

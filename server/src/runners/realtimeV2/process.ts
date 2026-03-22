@@ -43,6 +43,10 @@ import {
 } from '../../lib/marketUtils';
 import * as localStore from '../../lib/localStore';
 import {
+  getProvider,
+  type OrderbookData,
+} from '../../lib/marketDataProvider';
+import {
   type RealtimeDdsobV2Config,
   type RealtimeDdsobV2TickerConfig,
   FIRST_BUY_TIMEOUT_CANDLES,
@@ -82,6 +86,79 @@ function emptyIndicators(): IndicatorsState {
     pending5mCloses: [],
     initialized: false,
     barsAccumulated_1m: 0, barsAccumulated_5m: 0,
+  };
+}
+
+// ==================== 사이클 히스토리 빌더 ====================
+
+export function buildCycleHistoryData(state: Record<string, unknown>, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const firstBuyPrice = (state.firstBuyPrice as number) || 0;
+  const minPrice = (state.minPrice as number) || 0;
+  const maxPrice = (state.maxPrice as number) || 0;
+  const maxDrawdownPercent = firstBuyPrice > 0 && minPrice > 0
+    ? ((minPrice - firstBuyPrice) / firstBuyPrice) * 100
+    : 0;
+  const maxUpsidePercent = firstBuyPrice > 0 && maxPrice > 0
+    ? ((maxPrice - firstBuyPrice) / firstBuyPrice) * 100
+    : 0;
+
+  return {
+    // 기본 식별
+    ticker: state.ticker,
+    market: state.market,
+    strategy: overrides.strategy || 'realtimeDdsobV2',
+    stockName: state.stockName || state.ticker,
+    cycleNumber: (state.cycleNumber as number) || 1,
+    autoSelected: state.autoSelected || false,
+    startedAt: state.startedAt,
+    completedAt: new Date().toISOString(),
+
+    // 전략 옵션 (설정값 전체 기록)
+    principal: state.principal,
+    splitCount: state.splitCount,
+    profitPercent: state.profitPercent,
+    amountPerRound: state.amountPerRound,
+    intervalMinutes: state.intervalMinutes,
+    forceSellCandles: (state.forceSellCandles as number) || 0,
+    minDropPercent: (state.minDropPercent as number) || 0,
+    peakCheckCandles: (state.peakCheckCandles as number) ?? 0,
+    bufferPercent: 0.01,
+    autoStopLoss: state.autoStopLoss || false,
+    stopLossPercent: (state.stopLossPercent as number) ?? -5,
+    exhaustionStopLoss: state.exhaustionStopLoss || false,
+    exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
+    ascendingSplit: state.ascendingSplit || false,
+    exchangeCode: (state.exchangeCode as string) || '',
+    selectionMode: (state.selectionMode as string) || '',
+    conditionName: (state.conditionName as string) || '',
+
+    // 거래 결과 합산
+    totalBuyAmount: (state.totalBuyAmount as number) || 0,
+    totalSellAmount: (state.totalSellAmount as number) || 0,
+    totalRealizedProfit: (state.totalRealizedProfit as number) || 0,
+    finalProfitRate: (state.principal as number) > 0
+      ? ((state.totalRealizedProfit as number) || 0) / (state.principal as number)
+      : 0,
+    maxRoundsAtEnd: (state.maxRounds as number) || (state.splitCount as number),
+    candlesSinceCycleStart: (state.candlesSinceCycleStart as number) || 0,
+    totalForceSellCount: (state.totalForceSellCount as number) || 0,
+    totalForceSellLoss: (state.totalForceSellLoss as number) || 0,
+
+    // 매매 상세 기록 (신규)
+    firstBuyPrice,
+    minPrice,
+    maxPrice,
+    minPriceAt: (state.minPriceAt as string) || '',
+    maxPriceAt: (state.maxPriceAt as string) || '',
+    maxDrawdownPercent: parseFloat(maxDrawdownPercent.toFixed(4)),
+    maxUpsidePercent: parseFloat(maxUpsidePercent.toFixed(4)),
+    totalBuyRounds: (state.totalBuyRounds as number) || 0,
+    totalSellRounds: (state.totalSellRounds as number) || 0,
+    candlesBeforeFirstBuy: (state.candlesBeforeFirstBuy as number) || 0,
+    buyRoundDetails: (state.buyRoundDetails as unknown[]) || [],
+
+    // overrides (eodAction, forceStopSoldQuantity 등)
+    ...overrides,
   };
 }
 
@@ -449,6 +526,26 @@ export async function getDomesticOrderbookInfo(
   return { spreadTicks, spreadAbs, tick, tpTicks, askQty, bidQty, currentPrice, basePrice };
 }
 
+/** WS 호가 캐시에서 DomesticOrderbookInfo 생성 (REST 없이) */
+export function getDomesticOrderbookInfoFromCache(
+  ob: OrderbookData,
+  profitPercent: number,
+  basePrice?: number,
+): DomesticOrderbookInfo {
+  const askp1 = ob.askPrices[0] || 0;
+  const bidp1 = ob.bidPrices[0] || 0;
+  const currentPrice = askp1 > 0 && bidp1 > 0 ? Math.round((askp1 + bidp1) / 2) : (askp1 || bidp1);
+  const tick = getDomesticTickSize(currentPrice || askp1);
+  const spreadAbs = askp1 > 0 && bidp1 > 0 ? askp1 - bidp1 : Infinity;
+  const spreadTicks = spreadAbs === Infinity ? Infinity : Math.round(spreadAbs / tick);
+  const tpAbs = currentPrice * profitPercent;
+  const tpTicks = tick > 0 ? tpAbs / tick : 0;
+  const askQty = ob.askQtys[0] || 0;
+  const bidQty = ob.bidQtys[0] || 0;
+
+  return { spreadTicks, spreadAbs, tick, tpTicks, askQty, bidQty, currentPrice, basePrice: basePrice || 0 };
+}
+
 /**
  * 틱 기반 스프레드 + TP 틱수 + 잔량 필터 판정
  */
@@ -572,7 +669,7 @@ interface AutoSelectConfigV2_1 {
   exhaustionStopLossPercent?: number;
   minDropPercent?: number;
   peakCheckCandles?: number;
-  ascendingSplit?: boolean;
+  ascendingSplit?: boolean | 'reverse';
 }
 
 export async function applyIndicatorFiltersUS(
@@ -822,42 +919,14 @@ export async function forceStopRealtimeDdsobV2Ticker(
   const estimatedPrice = (state.previousPrice as number) || 0;
   const estimatedProfit = ((state.totalRealizedProfit as number) || 0) + (estimatedPrice * totalQty - totalBuyAmount);
 
-  store.addCycleHistory({
-    ticker,
-    market,
+  store.addCycleHistory(buildCycleHistoryData(state, {
     strategy: strategyId,
-    stockName: (state.stockName as string) || ticker,
-    cycleNumber: (state.cycleNumber as number) || 1,
-    autoSelected: (state.autoSelected as boolean) || false,
     eodAction: reason,
-    startedAt: state.startedAt,
-    completedAt: new Date().toISOString(),
-    principal: state.principal,
-    splitCount: state.splitCount,
-    profitPercent: state.profitPercent,
-    amountPerRound: state.amountPerRound,
-    forceSellCandles: state.forceSellCandles,
-    intervalMinutes: state.intervalMinutes,
-    minDropPercent: (state.minDropPercent as number) || 0,
-    peakCheckCandles: (state.peakCheckCandles as number) ?? 0,
-    bufferPercent: 0.01,
-    autoStopLoss: (state.autoStopLoss as boolean) || false,
-    stopLossPercent: (state.stopLossPercent as number) ?? -5,
-    exhaustionStopLoss: (state.exhaustionStopLoss as boolean) || false,
-    exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
-    exchangeCode: (state.exchangeCode as string) || '',
-    selectionMode: (state.selectionMode as string) || '',
-    conditionName: (state.conditionName as string) || '',
-    totalBuyAmount: (state.totalBuyAmount as number) || 0,
     totalSellAmount: ((state.totalSellAmount as number) || 0) + estimatedPrice * totalQty,
     totalRealizedProfit: estimatedProfit,
     finalProfitRate: (state.principal as number) > 0 ? estimatedProfit / (state.principal as number) : 0,
-    maxRoundsAtEnd: (state.maxRounds as number) || (state.splitCount as number),
-    candlesSinceCycleStart: (state.candlesSinceCycleStart as number) || 0,
-    totalForceSellCount: (state.totalForceSellCount as number) || 0,
-    totalForceSellLoss: (state.totalForceSellLoss as number) || 0,
     forceStopSoldQuantity: totalQty,
-  });
+  }));
 
   // 6. state 삭제
   store.deleteState('realtimeDdsobV2State', ticker);
@@ -881,7 +950,7 @@ export async function processRealtimeDdsobV2Trading(
   tickerConfig: RealtimeDdsobV2TickerConfig,
   globalConfig: Record<string, unknown>,
   market: MarketType,
-  options?: { sellOnly?: boolean; strategyId?: AccountStrategy },
+  options?: { sellOnly?: boolean; strategyId?: AccountStrategy; executionBuffer?: Map<string, Array<{ orderNo: string; side: string; qty: number; price: number; amount: number }>> },
   ctx?: AccountContext,
 ): Promise<void> {
   const store = ctx?.store ?? localStore;
@@ -1038,22 +1107,42 @@ export async function processRealtimeDdsobV2Trading(
             amount: parseFloat(o.ft_ccld_amt3) || parseFloat(o.ft_ccld_unpr3) * parseInt(o.ft_ccld_qty),
           }));
       } else {
-        const histResp = await kisClient.getDomesticOrderHistory(
-          credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
-          queryStartDate, todayStr, '01', '00', ticker
-        );
-        if (histResp.rt_cd !== '0') {
-          throw new Error(`Domestic order history API error: rt_cd=${histResp.rt_cd}, msg=${histResp.msg1}`);
+        // 국내: WS 체결통보 버퍼 먼저 확인
+        const pendingOrderNos = state!.lastOrderNumbers as string[];
+        const wsExecBuffer = options?.executionBuffer?.get(ticker);
+        if (wsExecBuffer && wsExecBuffer.length > 0) {
+          const wsMatched = wsExecBuffer.filter(e => pendingOrderNos.includes(e.orderNo) && e.qty > 0);
+          if (wsMatched.length > 0) {
+            filledOrders = wsMatched.map(e => ({
+              odno: e.orderNo,
+              sll_buy_dvsn_cd: e.side,
+              qty: e.qty,
+              price: e.price,
+              amount: e.amount,
+            }));
+            console.log(`[RealtimeDdsobV2:${tag}] ${ticker} fill check via WS buffer: ${filledOrders.length} matched`);
+          }
         }
-        filledOrders = (histResp.output1 || [])
-          .filter((o: { odno: string; tot_ccld_qty: string }) => (state!.lastOrderNumbers as string[]).includes(o.odno) && parseInt(o.tot_ccld_qty) > 0)
-          .map((o: { odno: string; sll_buy_dvsn_cd: string; tot_ccld_qty: string; avg_prvs: string; tot_ccld_amt: string }) => ({
-            odno: o.odno,
-            sll_buy_dvsn_cd: o.sll_buy_dvsn_cd,
-            qty: parseInt(o.tot_ccld_qty),
-            price: parseFloat(o.avg_prvs),
-            amount: parseFloat(o.tot_ccld_amt) || parseFloat(o.avg_prvs) * parseInt(o.tot_ccld_qty),
-          }));
+
+        // WS 버퍼에서 못 찾으면 REST fallback
+        if (filledOrders.length === 0) {
+          const histResp = await kisClient.getDomesticOrderHistory(
+            credentials.appKey, credentials.appSecret, accessToken, credentials.accountNo,
+            queryStartDate, todayStr, '01', '00', ticker
+          );
+          if (histResp.rt_cd !== '0') {
+            throw new Error(`Domestic order history API error: rt_cd=${histResp.rt_cd}, msg=${histResp.msg1}`);
+          }
+          filledOrders = (histResp.output1 || [])
+            .filter((o: { odno: string; tot_ccld_qty: string }) => pendingOrderNos.includes(o.odno) && parseInt(o.tot_ccld_qty) > 0)
+            .map((o: { odno: string; sll_buy_dvsn_cd: string; tot_ccld_qty: string; avg_prvs: string; tot_ccld_amt: string }) => ({
+              odno: o.odno,
+              sll_buy_dvsn_cd: o.sll_buy_dvsn_cd,
+              qty: parseInt(o.tot_ccld_qty),
+              price: parseFloat(o.avg_prvs),
+              amount: parseFloat(o.tot_ccld_amt) || parseFloat(o.avg_prvs) * parseInt(o.tot_ccld_qty),
+            }));
+        }
       }
 
       let buyRecords: RealtimeBuyRecordV2[] = (state.buyRecords as RealtimeBuyRecordV2[]) || [];
@@ -1117,17 +1206,41 @@ export async function processRealtimeDdsobV2Trading(
 
         if (isBuy) {
           const newId = generateRealtimeBuyRecordIdV2();
+          const buyTime = new Date().toISOString();
           buyRecords.push({
             id: newId,
             buyPrice: filled.price,
             quantity: filled.qty,
             buyAmount: filled.amount,
-            buyDate: new Date().toISOString(),
+            buyDate: buyTime,
           });
           newBuyRecordIds.push(newId);
           totalBuyAmount += filled.amount;
           hadTrade = true;
-          console.log(`[RealtimeDdsobV2:${tag}] Buy filled: ${filled.qty}주 @ ${fp(filled.price)}`);
+
+          // 매수 라운드 상세 기록
+          const existingDetails = (state.buyRoundDetails as Array<Record<string, unknown>>) || [];
+          const roundNumber = existingDetails.length + 1;
+          existingDetails.push({
+            round: roundNumber,
+            price: filled.price,
+            quantity: filled.qty,
+            amount: filled.amount,
+            time: buyTime,
+          });
+          state.buyRoundDetails = existingDetails;
+          state.totalBuyRounds = roundNumber;
+
+          // 첫 매수가 기록 + min/max 초기화
+          if (roundNumber === 1) {
+            state.firstBuyPrice = filled.price;
+            state.minPrice = filled.price;
+            state.maxPrice = filled.price;
+            state.minPriceAt = buyTime;
+            state.maxPriceAt = buyTime;
+          }
+
+          console.log(`[RealtimeDdsobV2:${tag}] Buy filled: ${filled.qty}주 @ ${fp(filled.price)} (round ${roundNumber})`);
         } else {
           const { consumedCost, consumedQty } = consumeBuyRecordsFIFO(filled.qty, filled.amount);
           if (consumedQty === 0) {
@@ -1138,6 +1251,7 @@ export async function processRealtimeDdsobV2Trading(
           totalSellAmount += filled.amount;
           totalRealizedProfit += profit;
           hadTrade = true;
+          state.totalSellRounds = ((state.totalSellRounds as number) || 0) + 1;
           console.log(`[RealtimeDdsobV2:${tag}] Sell filled (FIFO): ${filled.qty}주 @ ${fp(filled.price)}, cost=${fp(consumedCost)}, profit=${fp(profit)}, remaining=${buyRecords.length} records`);
         }
       }
@@ -1162,6 +1276,14 @@ export async function processRealtimeDdsobV2Trading(
       // ======== 상태 저장 ========
       const fillStateData: Record<string, unknown> = {
         buyRecords,
+        buyRoundDetails: state.buyRoundDetails,
+        firstBuyPrice: state.firstBuyPrice,
+        minPrice: state.minPrice,
+        maxPrice: state.maxPrice,
+        minPriceAt: state.minPriceAt,
+        maxPriceAt: state.maxPriceAt,
+        totalBuyRounds: state.totalBuyRounds,
+        totalSellRounds: state.totalSellRounds,
         candlesSinceCycleStart: ((state.candlesSinceCycleStart as number) || 0) + 1,
         maxRounds,
         totalRealizedProfit,
@@ -1191,40 +1313,14 @@ export async function processRealtimeDdsobV2Trading(
 
         // 2) 사이클 이력 저장 (중복 방지: localStore에서는 단순 추가)
         try {
-          store.addCycleHistory({
-            ticker,
-            market,
+          store.addCycleHistory(buildCycleHistoryData(state, {
             strategy: strategyId,
-            stockName: (tickerConfig.stockName as string) || ticker,
-            cycleNumber: (state.cycleNumber as number) || 1,
-            autoSelected: (state.autoSelected as boolean) || false,
-            startedAt: state.startedAt,
-            completedAt: new Date().toISOString(),
-            principal: state.principal,
-            splitCount,
-            profitPercent,
-            amountPerRound: state.amountPerRound,
-            intervalMinutes,
-            forceSellCandles: (state.forceSellCandles as number) || 0,
-            minDropPercent: (state.minDropPercent as number) || 0,
-            peakCheckCandles: (state.peakCheckCandles as number) ?? 0,
-            bufferPercent: 0.01,
-            autoStopLoss: (state.autoStopLoss as boolean) || false,
-            stopLossPercent: (state.stopLossPercent as number) ?? -5,
-            exhaustionStopLoss: (state.exhaustionStopLoss as boolean) || false,
-            exhaustionStopLossPercent: (state.exhaustionStopLossPercent as number) ?? 3,
-            exchangeCode: (state.exchangeCode as string) || '',
-            selectionMode: (state.selectionMode as string) || '',
-            conditionName: (state.conditionName as string) || '',
             totalBuyAmount,
             totalSellAmount,
             totalRealizedProfit,
             finalProfitRate: (state.principal as number) > 0 ? totalRealizedProfit / (state.principal as number) : 0,
             maxRoundsAtEnd: maxRounds,
-            candlesSinceCycleStart: (state.candlesSinceCycleStart as number) || 0,
-            totalForceSellCount: (state.totalForceSellCount as number) || 0,
-            totalForceSellLoss: (state.totalForceSellLoss as number) || 0,
-          });
+          }));
         } catch (histErr) {
           console.error(`[RealtimeDdsobV2:${tag}] Failed to save cycle history (non-critical):`, histErr);
         }
@@ -1335,13 +1431,13 @@ export async function processRealtimeDdsobV2Trading(
   }
 
   // ======== 1단계: 현재가 조회 ========
-  await new Promise(resolve => setTimeout(resolve, 300));
   let currentPrice: number;
   let domesticUpperLimit = 0;
   let domesticLowerLimit = 0;
   let domesticTickSize: number | undefined;
 
   if (market === 'overseas') {
+    await new Promise(resolve => setTimeout(resolve, 300));
     try {
       const priceData = await kisClient.getCurrentPrice(
         credentials.appKey, credentials.appSecret, accessToken, ticker, quoteExcd
@@ -1360,14 +1456,42 @@ export async function processRealtimeDdsobV2Trading(
       }
     }
   } else {
-    const priceData = await kisClient.getDomesticCurrentPrice(
-      credentials.appKey, credentials.appSecret, accessToken, ticker
-    );
-    currentPrice = parseInt(priceData.output?.stck_prpr || '0');
-    domesticUpperLimit = parseInt(priceData.output?.stck_mxpr || '0');
-    domesticLowerLimit = parseInt(priceData.output?.stck_llam || '0');
-    const asprUnit = parseInt(priceData.output?.aspr_unit || '0');
-    if (asprUnit > 0) domesticTickSize = asprUnit;
+    // 국내: WS 캐시에서 현재가 우선 조회
+    const wsProvider = getProvider(ctx?.accountId ?? accountId);
+    const wsTick = wsProvider?.getLatestTick(ticker);
+    const wsTickFresh = wsTick && (Date.now() - wsTick.timestamp) < 10_000;
+
+    // 상/하한가: state에 캐싱된 값 사용 (사이클 시작 시 1회만 REST)
+    const cachedUpper = state?.domesticUpperLimit as number | undefined;
+    const cachedLower = state?.domesticLowerLimit as number | undefined;
+    const hasLimitsInState = cachedUpper && cachedUpper > 0 && cachedLower && cachedLower > 0;
+
+    if (wsTickFresh && hasLimitsInState) {
+      // WS 캐시 + state 상/하한가 → REST 호출 불필요
+      currentPrice = wsTick.currentPrice;
+      domesticUpperLimit = cachedUpper;
+      domesticLowerLimit = cachedLower;
+      console.log(`[RealtimeDdsobV2:${tag}] ${ticker} price from WS cache: ${currentPrice} (age=${Date.now() - wsTick.timestamp}ms)`);
+    } else {
+      // REST fallback
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const priceData = await kisClient.getDomesticCurrentPrice(
+        credentials.appKey, credentials.appSecret, accessToken, ticker
+      );
+      currentPrice = parseInt(priceData.output?.stck_prpr || '0');
+      domesticUpperLimit = parseInt(priceData.output?.stck_mxpr || '0');
+      domesticLowerLimit = parseInt(priceData.output?.stck_llam || '0');
+      const asprUnit = parseInt(priceData.output?.aspr_unit || '0');
+      if (asprUnit > 0) domesticTickSize = asprUnit;
+
+      // 상/하한가를 state에 캐싱 (이후 틱에서는 REST 생략)
+      if (state && domesticUpperLimit > 0 && domesticLowerLimit > 0) {
+        store.updateState('realtimeDdsobV2State', ticker, {
+          domesticUpperLimit,
+          domesticLowerLimit,
+        });
+      }
+    }
   }
 
   if (currentPrice <= 0) {
@@ -1468,12 +1592,21 @@ export async function processRealtimeDdsobV2Trading(
       stopLossPercent: tickerConfig.stopLossPercent ?? -5,
       exhaustionStopLoss: tickerConfig.exhaustionStopLoss || false,
       exhaustionStopLossPercent: tickerConfig.exhaustionStopLossPercent ?? 3,
+      ascendingSplit: tickerConfig.ascendingSplit || false,
       selectionMode: tickerConfig.selectionMode || '',
       conditionName: tickerConfig.conditionName || '',
       buyRecords: [],
+      buyRoundDetails: [],
       candlesSinceCycleStart: 0,
       candlesBeforeFirstBuy: 0,
       previousPrice: currentPrice,
+      firstBuyPrice: 0,
+      minPrice: 0,
+      maxPrice: 0,
+      minPriceAt: '',
+      maxPriceAt: '',
+      totalBuyRounds: 0,
+      totalSellRounds: 0,
       totalRealizedProfit: 0,
       totalBuyAmount: 0,
       totalSellAmount: 0,
@@ -1483,6 +1616,8 @@ export async function processRealtimeDdsobV2Trading(
       lastCheckedAt: new Date().toISOString(),
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      domesticUpperLimit: market === 'domestic' ? domesticUpperLimit : 0,
+      domesticLowerLimit: market === 'domestic' ? domesticLowerLimit : 0,
     };
 
     // EMA/RSI 지표 초기화
@@ -1599,7 +1734,7 @@ export async function processRealtimeDdsobV2Trading(
   // 점증 분할: 버퍼 적용 가격 기준으로 계산해야 첫 회차에서 1주 보장됨
   const ascendingBuyPrice = Math.ceil(currentPrice * (1 + bufferPercent));
   const effectiveAmountPerRound = tickerConfig.ascendingSplit
-    ? getAscendingAmountForRound((state.principal as number), splitCount, buyRecords.length, ascendingBuyPrice)
+    ? getAscendingAmountForRound((state.principal as number), splitCount, buyRecords.length, ascendingBuyPrice, 0, tickerConfig.ascendingSplit === 'reverse')
     : equalAmountPerRound;
 
   const calcResult = calculateRealtimeDdsobV2({
@@ -1625,6 +1760,11 @@ export async function processRealtimeDdsobV2Trading(
 
   console.log(`[RealtimeDdsobV2:${tag}] Calc result: action=${calcResult.action}, reason=${calcResult.actionReason}, buys=${calcResult.buyOrders.length}, sells=${calcResult.sellOrders.length}`);
 
+  const firstBuyPriceVal = (state.firstBuyPrice as number) || 0;
+  const drawdownFromFirstBuy = firstBuyPriceVal > 0
+    ? parseFloat((((currentPrice - firstBuyPriceVal) / firstBuyPriceVal) * 100).toFixed(2))
+    : null;
+
   store.appendLog('realtimeV2TradingLogs', todayStr, {
     ticker,
     action: calcResult.action,
@@ -1632,6 +1772,11 @@ export async function processRealtimeDdsobV2Trading(
     buys: calcResult.buyOrders.length,
     sells: calcResult.sellOrders.length,
     currentPrice,
+    firstBuyPrice: firstBuyPriceVal || null,
+    drawdownFromFirstBuy,
+    targetSellPrice: calcResult.targetSellPrice || null,
+    holdingRounds: buyRecords.length,
+    totalBuyRounds: (state.totalBuyRounds as number) || 0,
     indicators: {
       ema9_1m: (state.indicators as IndicatorsState)?.ema9_1m ?? null,
       ema20_5m: (state.indicators as IndicatorsState)?.ema20_5m ?? null,
@@ -1641,6 +1786,16 @@ export async function processRealtimeDdsobV2Trading(
     checkedAt: new Date().toISOString(),
   });
 
+  // min/max 가격 추적 (hold/order 공통)
+  const trackMinMax = (upd: Record<string, unknown>) => {
+    if ((state.firstBuyPrice as number) > 0) {
+      const prevMin = (state.minPrice as number) || currentPrice;
+      const prevMax = (state.maxPrice as number) || currentPrice;
+      if (currentPrice < prevMin) { upd.minPrice = currentPrice; upd.minPriceAt = new Date().toISOString(); }
+      if (currentPrice > prevMax) { upd.maxPrice = currentPrice; upd.maxPriceAt = new Date().toISOString(); }
+    }
+  };
+
   if (calcResult.action === 'hold') {
     // sell-only 모드: 매수 관련 hold 로직 스킵, 상태만 갱신
     if (sellOnly) {
@@ -1649,6 +1804,7 @@ export async function processRealtimeDdsobV2Trading(
         lastCheckedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
+      trackMinMax(holdUpdate);
       if (buyRecords.length > 0) {
         holdUpdate.candlesSinceCycleStart = ((state.candlesSinceCycleStart as number) || 0) + 1;
       }
@@ -1742,6 +1898,7 @@ export async function processRealtimeDdsobV2Trading(
       lastCheckedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    trackMinMax(holdUpdate);
     if (isFirstBuy && tickerConfig.autoSelected) {
       holdUpdate.candlesBeforeFirstBuy = ((state.candlesBeforeFirstBuy as number) || 0) + 1;
     }
@@ -1957,6 +2114,8 @@ export async function processRealtimeDdsobV2Trading(
     lastSellInfo: sellInfo,
     lastOrderDate: orderNumbers.length > 0 ? todayStr : '',
   };
+
+  trackMinMax(updateData);
 
   if (pendingRsiData) {
     updateData.pendingRsiData = pendingRsiData;

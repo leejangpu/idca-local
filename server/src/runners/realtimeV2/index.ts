@@ -11,7 +11,6 @@ import {
   isMarketStrategyActive,
   getCommonConfig,
   getMarketStrategyConfig,
-  type AccountStrategy,
   type CommonConfig,
 } from '../../lib/configHelper';
 import {
@@ -24,10 +23,8 @@ import {
 } from '../../lib/marketUtils';
 import {
   type RealtimeDdsobV2Config,
-  type RealtimeDdsobV2_1Config,
   type RealtimeDdsobV2TickerConfig,
   type AutoSelectConfig,
-  type AutoSelectConfigUS,
   extractTickerConfigsV2,
   buildTickerConfigFromStateV2,
 } from './types';
@@ -36,8 +33,17 @@ import {
   processAutoSelectEOD,
   processAutoSelectStocks,
   processAutoSelectStocksUS,
-  processAutoSelectStocksV2_1US,
 } from './autoSelect';
+import {
+  getOrCreateProvider,
+  subscribeWithRef,
+  unsubscribeWithRef,
+  unsubscribeAllByConsumer,
+  subscribeOrderbookWithRef,
+  unsubscribeOrderbookWithRef,
+  unsubscribeAllOrderbookByConsumer,
+  type ExecutionNotification,
+} from '../../lib/marketDataProvider';
 
 // 동시 실행 방어: 이전 트리거가 실행 중이면 다음 트리거를 스킵 (계정별)
 const usRunning = new Map<string, boolean>();
@@ -46,6 +52,99 @@ const krRunning = new Map<string, boolean>();
 // ---------- 단일 유저/계정 (default fallback) ----------
 const userId = config.userId;
 const accountId = config.accountId;
+
+// ========================================
+// WS 체결통보 버퍼 (H0STCNI0)
+// ========================================
+
+// accountId → ticker → Array<{ orderNo, side, qty, price, amount }>
+const executionBuffers = new Map<string, Map<string, Array<{ orderNo: string; side: string; qty: number; price: number; amount: number }>>>();
+
+// accountId → 체결통보 구독 완료 여부
+const executionSubscribed = new Set<string>();
+
+// 이전에 구독 중이던 종목 (계정별)
+const prevSubscribedTickers = new Map<string, Set<string>>();
+
+function getExecutionBuffer(acctId: string): Map<string, Array<{ orderNo: string; side: string; qty: number; price: number; amount: number }>> {
+  if (!executionBuffers.has(acctId)) {
+    executionBuffers.set(acctId, new Map());
+  }
+  return executionBuffers.get(acctId)!;
+}
+
+function handleExecution(acctId: string, exec: ExecutionNotification): void {
+  const buffer = getExecutionBuffer(acctId);
+  if (!buffer.has(exec.ticker)) {
+    buffer.set(exec.ticker, []);
+  }
+  buffer.get(exec.ticker)!.push({
+    orderNo: exec.orderNo,
+    side: exec.side,
+    qty: exec.filledQty,
+    price: exec.filledPrice,
+    amount: exec.filledPrice * exec.filledQty,
+  });
+}
+
+// provider가 start()된 적 있는 계정
+const providerStarted = new Set<string>();
+
+/**
+ * WS provider 초기화 + 체결통보 구독 (계정별 1회)
+ */
+async function ensureProviderAndExecution(ctx: AccountContext): Promise<void> {
+  const acctId = ctx.accountId;
+  const provider = getOrCreateProvider(acctId, ctx, 'websocket');
+
+  // provider가 아직 시작되지 않았으면 시작 (단타가 이미 만들어서 start한 경우 스킵)
+  if (!providerStarted.has(acctId)) {
+    // getOrCreateProvider가 새로 만들었을 때만 start
+    // 이미 단타 등이 start한 provider는 다시 start하지 않음
+    if (provider.getSubscriptions().length === 0 && !provider.isFallbackActive()) {
+      try {
+        await provider.start();
+      } catch (err) {
+        console.error(`[RealtimeDdsobV2:KR] Provider start failed for ${acctId}:`, err);
+      }
+    }
+    providerStarted.add(acctId);
+  }
+
+  // 체결통보 구독 (HTS ID)
+  if (!executionSubscribed.has(acctId) && ctx.credentials.htsUserId) {
+    provider.subscribeExecution(ctx.credentials.htsUserId);
+    provider.onExecution((exec) => handleExecution(acctId, exec));
+    executionSubscribed.add(acctId);
+    console.log(`[RealtimeDdsobV2:KR] H0STCNI0 subscribed for ${acctId} (htsId=${ctx.credentials.htsUserId})`);
+  }
+}
+
+/**
+ * 활성 종목 목록에 맞춰 WS 구독 동기화
+ */
+function syncSubscriptions(acctId: string, activeTickers: Set<string>): void {
+  const prev = prevSubscribedTickers.get(acctId) || new Set<string>();
+  const consumer = 'realtimeV2';
+
+  // 새로 추가된 종목: 구독
+  for (const ticker of activeTickers) {
+    if (!prev.has(ticker)) {
+      subscribeWithRef(acctId, ticker, consumer);
+      subscribeOrderbookWithRef(acctId, ticker, consumer);
+    }
+  }
+
+  // 제거된 종목: 구독 해제
+  for (const ticker of prev) {
+    if (!activeTickers.has(ticker)) {
+      unsubscribeWithRef(acctId, ticker, consumer);
+      unsubscribeOrderbookWithRef(acctId, ticker, consumer);
+    }
+  }
+
+  prevSubscribedTickers.set(acctId, new Set(activeTickers));
+}
 
 /**
  * 실사오팔v2 미국장 러너
@@ -95,9 +194,7 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
       ? ctx.store.getTradingConfig<CommonConfig>()
       : getCommonConfig();
     if (!commonConfig?.tradingEnabled) { return; }
-    const isV2Active = isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2');
-    const isV2_1Active = isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2_1');
-    const isActiveStrategy = isV2Active || isV2_1Active;
+    const isActiveStrategy = isMarketStrategyActive(commonConfig, 'overseas', 'realtimeDdsobV2');
 
     // 전략이 다를 때: 잔여 포지션이 있으면 매도 전용 모드, 없으면 스킵
     if (!isActiveStrategy) {
@@ -113,16 +210,14 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
       console.log(`[RealtimeDdsobV2:US] ${userId}/${accountId} — 매도 전용 모드 (잔여 포지션 존재)`);
     }
 
-    const rdConfig = isV2_1Active
-      ? (ctx ? ctx.store.getStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1') : getMarketStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1'))
-      : (ctx ? ctx.store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2') : getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2'));
+    const rdConfig = ctx
+      ? ctx.store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2')
+      : getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
     if (!rdConfig) return;
 
     const tickerConfigs = extractTickerConfigsV2(rdConfig as unknown as Record<string, unknown>);
     const overseasConfigTickers = tickerConfigs.filter(t => t.market === 'overseas');
-    const isUSAutoSelectEnabled = isV2_1Active
-      ? (rdConfig as RealtimeDdsobV2_1Config).autoSelectEnabledUS === true
-      : (rdConfig as RealtimeDdsobV2Config).autoSelectEnabledUS === true;
+    const isUSAutoSelectEnabled = rdConfig.autoSelectEnabledUS === true;
     const isUSEODTime = currentMinute >= 945;
 
     // ======== 활성 state 조회 + config 매핑 ========
@@ -154,8 +249,7 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
       if (!eodAlreadyDone?.done) {
         store.setState('realtimeV2EodLog', eodFlagKey, { done: true });
         try {
-          const eodStrategyId: AccountStrategy = isV2_1Active ? 'realtimeDdsobV2_1' : 'realtimeDdsobV2';
-          await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'overseas', eodStrategyId, ctx);
+          await processAutoSelectEOD(eodTickers, rdConfig as unknown as Record<string, unknown>, 'overseas', 'realtimeDdsobV2', ctx);
         } catch (err) {
           console.error(`[RealtimeDdsobV2:US] EOD error ${userId}/${accountId}:`, err);
         }
@@ -170,7 +264,6 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
 
     // ======== 2. 활성 state 기반 일반 매매 처리 (병렬, 300ms 스태거) ========
     {
-      const tradingStrategyId: AccountStrategy = isV2_1Active ? 'realtimeDdsobV2_1' : 'realtimeDdsobV2';
       const tasks = normalStateTickers
         .filter(({ tc }) => currentMinute % tc.intervalMinutes === 0)
         .map(({ ticker, tc }, i) => {
@@ -178,7 +271,7 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
           return new Promise<void>(resolve => setTimeout(resolve, i * 300)).then(async () => {
             try {
               await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'overseas',
-                !isActiveStrategy ? { sellOnly: true, strategyId: tradingStrategyId } : { strategyId: tradingStrategyId }, ctx);
+                !isActiveStrategy ? { sellOnly: true } : undefined, ctx);
             } catch (err) {
               console.error(`[RealtimeDdsobV2:US] Error ${userId}/${accountId}/${ticker}:`, err);
             }
@@ -195,7 +288,6 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
 
     // ======== 3. config에만 있고 state가 없는 종목 → 신규 사이클 시작 (병렬, 300ms 스태거) ========
     {
-      const tradingStrategyId2: AccountStrategy = isV2_1Active ? 'realtimeDdsobV2_1' : 'realtimeDdsobV2';
       const activeStateTickers = new Set(allStatesMap.keys());
       const newTasks = overseasConfigTickers
         .filter(tc => !activeStateTickers.has(tc.ticker) && currentMinute % tc.intervalMinutes === 0)
@@ -203,7 +295,7 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
           processedCount++;
           return new Promise<void>(resolve => setTimeout(resolve, i * 300)).then(async () => {
             try {
-              await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'overseas', { strategyId: tradingStrategyId2 }, ctx);
+              await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'overseas', undefined, ctx);
             } catch (err) {
               console.error(`[RealtimeDdsobV2:US] New cycle error ${tc.ticker}:`, err);
             }
@@ -215,65 +307,45 @@ export async function runRealtimeV2US(ctx?: AccountContext): Promise<void> {
     // ======== US 빈 슬롯 재선택 (매매 처리와 독립적으로 실행) ========
     const usReselectionCutoff = 15 * 60; // 15:00 ET
     if (!isUSEODTime && isUSAutoSelectEnabled && currentMinute < usReselectionCutoff) {
-      try {
-        // v2.1: 지표 기반 자동선별 / v2: 기존 거래대금 순위 기반
-        const latestRdConfig = isV2_1Active
-          ? (ctx ? ctx.store.getStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1') : getMarketStrategyConfig<RealtimeDdsobV2_1Config>('overseas', 'realtimeDdsobV2_1'))
-          : (ctx ? ctx.store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2') : getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2'));
-        if (latestRdConfig) {
-          const latestTickers = extractTickerConfigsV2(latestRdConfig as unknown as Record<string, unknown>);
-          const currentUSAutoCount = latestTickers.filter(t => t.autoSelected && t.market === 'overseas').length;
+      const autoConfigUS = rdConfig.autoSelectConfigUS as AutoSelectConfig | undefined;
+      if (autoConfigUS && autoConfigUS.stockCount > 0) {
+        try {
+          const latestRdConfig = ctx
+            ? ctx.store.getStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2')
+            : getMarketStrategyConfig<RealtimeDdsobV2Config>('overseas', 'realtimeDdsobV2');
+          if (latestRdConfig) {
+            const latestTickers = extractTickerConfigsV2(latestRdConfig as unknown as Record<string, unknown>);
+            const currentUSAutoCount = latestTickers.filter(t => t.autoSelected && t.market === 'overseas').length;
 
-          // state 기반 가드: 활성 overseas state 수도 슬롯 점유로 간주
-          const freshUSStates = store.getAllStates<Record<string, unknown>>(isV2_1Active ? 'realtimeDdsobV2State' : 'realtimeDdsobV2State');
-          let activeUSStateCount = 0;
-          for (const [tk, st] of freshUSStates) {
-            if (st.status === 'active' && (st.market || getMarketType(tk)) === 'overseas') {
-              activeUSStateCount++;
-            }
-          }
-          const usOccupiedCount = Math.max(currentUSAutoCount, activeUSStateCount);
-
-          if (isV2_1Active) {
-            const autoConfigV2_1 = (latestRdConfig as RealtimeDdsobV2_1Config).autoSelectConfigUS;
-            if (autoConfigV2_1 && autoConfigV2_1.stockCount > 0) {
-              const emptySlots = autoConfigV2_1.stockCount - usOccupiedCount;
-              if (emptySlots > 0) {
-                console.log(`[RealtimeDdsobV2.1:US] Empty slots detected: ${emptySlots}`);
-                const newTickers = await processAutoSelectStocksV2_1US(autoConfigV2_1, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
-                for (const ntc of newTickers) {
-                  processedCount++;
-                  try {
-                    await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'overseas', { strategyId: 'realtimeDdsobV2_1' }, ctx);
-                  } catch (err) {
-                    console.error(`[RealtimeDdsobV2.1:US] Refill immediate trade error ${ntc.ticker}:`, err);
-                  }
-                  await new Promise(resolve => setTimeout(resolve, 500));
-                }
+            // state 기반 가드: 활성 overseas state 수도 슬롯 점유로 간주
+            const freshUSStates = store.getAllStates<Record<string, unknown>>('realtimeDdsobV2State');
+            let activeUSStateCount = 0;
+            for (const [tk, st] of freshUSStates) {
+              if (st.status === 'active' && (st.market || getMarketType(tk)) === 'overseas') {
+                activeUSStateCount++;
               }
             }
-          } else {
-            const autoConfigUS = (latestRdConfig as RealtimeDdsobV2Config).autoSelectConfigUS as unknown as AutoSelectConfigUS;
-            if (autoConfigUS && autoConfigUS.stockCount > 0) {
-              const emptySlots = autoConfigUS.stockCount - usOccupiedCount;
-              if (emptySlots > 0) {
-                console.log(`[RealtimeDdsobV2:US] Empty slots detected: ${emptySlots} (target=${autoConfigUS.stockCount}, current=${currentUSAutoCount})`);
-                const newTickers = await processAutoSelectStocksUS(autoConfigUS, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
-                for (const ntc of newTickers) {
-                  processedCount++;
-                  try {
-                    await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'overseas', undefined, ctx);
-                  } catch (err) {
-                    console.error(`[RealtimeDdsobV2:US] Refill immediate trade error ${ntc.ticker}:`, err);
-                  }
-                  await new Promise(resolve => setTimeout(resolve, 500));
+            const usOccupiedCount = Math.max(currentUSAutoCount, activeUSStateCount);
+            const emptySlots = autoConfigUS.stockCount - usOccupiedCount;
+
+            if (emptySlots > 0) {
+              console.log(`[RealtimeDdsobV2:US] Empty slots detected: ${emptySlots} (target=${autoConfigUS.stockCount}, configAuto=${currentUSAutoCount}, activeStates=${activeUSStateCount})`);
+              const newTickers = await processAutoSelectStocksUS(autoConfigUS, latestRdConfig as unknown as Record<string, unknown>, { mode: 'refill' }, ctx);
+
+              for (const ntc of newTickers) {
+                processedCount++;
+                try {
+                  await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'overseas', undefined, ctx);
+                } catch (err) {
+                  console.error(`[RealtimeDdsobV2:US] Refill immediate trade error ${ntc.ticker}:`, err);
                 }
+                await new Promise(resolve => setTimeout(resolve, 500));
               }
             }
           }
+        } catch (err) {
+          console.error(`[RealtimeDdsobV2:US] Refill error ${userId}/${accountId}:`, err);
         }
-      } catch (err) {
-        console.error(`[RealtimeDdsobV2:US] Refill error ${userId}/${accountId}:`, err);
       }
     }
 
@@ -320,6 +392,7 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
 
   try {
     let processedCount = 0;
+    const acctId = ctx?.accountId ?? accountId;
     const store = ctx?.store ?? localStore;
 
     const commonConfig = ctx
@@ -347,6 +420,11 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
       : getMarketStrategyConfig<RealtimeDdsobV2Config>('domestic', 'realtimeDdsobV2');
     if (!rdConfig) return;
 
+    // ======== WS Provider 초기화 + 체결통보 구독 ========
+    if (ctx) {
+      await ensureProviderAndExecution(ctx);
+    }
+
     const tickerConfigs = extractTickerConfigsV2(rdConfig as unknown as Record<string, unknown>);
     const domesticConfigTickers = tickerConfigs.filter(t => t.market === 'domestic');
     const isEODTime = currentMinute >= 915;
@@ -359,11 +437,15 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
     const eodTickers: RealtimeDdsobV2TickerConfig[] = [];
     const normalStateTickers: { ticker: string; tc: RealtimeDdsobV2TickerConfig }[] = [];
 
+    // 활성 종목 목록 수집 (WS 구독 동기화용)
+    const activeDomesticTickers = new Set<string>();
+
     for (const [ticker, stateData] of allStatesMap) {
       if (stateData.status !== 'active') continue;
       const stateMarket = stateData.market || getMarketType(ticker);
       if (stateMarket !== 'domestic') continue;
 
+      activeDomesticTickers.add(ticker);
       const tc = configTickerMap.get(ticker) || buildTickerConfigFromStateV2(stateData);
 
       if (isEODTime && (tc.autoSelected || tc.forceLiquidateAtClose)) {
@@ -372,6 +454,19 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
         normalStateTickers.push({ ticker, tc });
       }
     }
+
+    // config에만 있고 state가 없는 종목도 구독 대상 포함
+    for (const tc of domesticConfigTickers) {
+      activeDomesticTickers.add(tc.ticker);
+    }
+
+    // WS 구독 동기화
+    if (ctx) {
+      syncSubscriptions(acctId, activeDomesticTickers);
+    }
+
+    // 체결통보 버퍼 스냅샷 (이번 틱에서 사용 후 클리어)
+    const execBuffer = getExecutionBuffer(acctId);
 
     // ======== 1. EOD 일괄 처리 (autoSelected/forceLiquidateAtClose) ========
     if (isEODTime && eodTickers.length > 0 && isActiveStrategy) {
@@ -387,8 +482,18 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
       }
     }
 
-    // ======== EOD 이후 일반 매매 차단 ========
+    // ======== EOD 이후: 매매 차단 + 장마감 시 구독 해제 ========
     if (isEODTime) {
+      // 장마감 시 WS 구독 해제
+      if (currentMinute >= 930 && ctx) {
+        unsubscribeAllByConsumer(acctId, 'realtimeV2');
+        unsubscribeAllOrderbookByConsumer(acctId, 'realtimeV2');
+        prevSubscribedTickers.delete(acctId);
+        // 체결통보 버퍼 + 상태 플래그 클리어 (다음 날 재구독 위해)
+        executionBuffers.delete(acctId);
+        executionSubscribed.delete(acctId);
+        providerStarted.delete(acctId);
+      }
       console.log(`[RealtimeDdsobV2:KR] Processed ${processedCount} tickers`);
       return;
     }
@@ -402,7 +507,7 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
           return new Promise<void>(resolve => setTimeout(resolve, i * 300)).then(async () => {
             try {
               await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'domestic',
-                !isActiveStrategy ? { sellOnly: true } : undefined, ctx);
+                !isActiveStrategy ? { sellOnly: true, executionBuffer: execBuffer } : { executionBuffer: execBuffer }, ctx);
             } catch (err) {
               console.error(`[RealtimeDdsobV2:KR] Error ${userId}/${accountId}/${ticker}:`, err);
             }
@@ -434,7 +539,8 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
           processedCount++;
           return new Promise<void>(resolve => setTimeout(resolve, i * 300)).then(async () => {
             try {
-              await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'domestic', undefined, ctx);
+              await processRealtimeDdsobV2Trading(userId, accountId, tc, rdConfig as unknown as Record<string, unknown>, 'domestic',
+                { executionBuffer: execBuffer }, ctx);
             } catch (err) {
               console.error(`[RealtimeDdsobV2:KR] New cycle error ${tc.ticker}:`, err);
             }
@@ -476,7 +582,8 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
               for (const ntc of newTickers) {
                 processedCount++;
                 try {
-                  await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'domestic', undefined, ctx);
+                  await processRealtimeDdsobV2Trading(userId, accountId, ntc, latestRdConfig as unknown as Record<string, unknown>, 'domestic',
+                    { executionBuffer: execBuffer }, ctx);
                 } catch (err) {
                   console.error(`[RealtimeDdsobV2:KR] Refill immediate trade error ${ntc.ticker}:`, err);
                 }
@@ -489,6 +596,9 @@ export async function runRealtimeV2KR(ctx?: AccountContext): Promise<void> {
         }
       }
     }
+
+    // 체결통보 버퍼 클리어 (이번 틱 처리 완료)
+    execBuffer.clear();
 
     console.log(`[RealtimeDdsobV2:KR] Processed ${processedCount} tickers`);
   } catch (error) {
