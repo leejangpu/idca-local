@@ -1,0 +1,63 @@
+name: Infinite Buy - Toggle
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'on / off / toggle'
+        required: true
+        default: 'toggle'
+        type: choice
+        options:
+          - 'on'
+          - 'off'
+          - 'toggle'
+
+permissions:
+  contents: write
+
+jobs:
+  toggle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Toggle enabled state
+        run: |
+          CONFIG="infinite-buy/config.json"
+          CURRENT=$(jq -r '.enabled' "$CONFIG")
+
+          case "${{ github.event.inputs.action }}" in
+            on)     NEW=true ;;
+            off)    NEW=false ;;
+            toggle)
+              if [ "$CURRENT" = "true" ]; then
+                NEW=false
+              else
+                NEW=true
+              fi
+              ;;
+          esac
+
+          jq ".enabled = $NEW" "$CONFIG" > tmp.json && mv tmp.json "$CONFIG"
+          echo "Changed enabled: $CURRENT → $NEW"
+          echo "PREV=$CURRENT" >> $GITHUB_ENV
+          echo "NEXT=$NEW" >> $GITHUB_ENV
+
+      - name: Commit
+        run: |
+          git config user.name "infinite-buy-bot"
+          git config user.email "bot@infinite-buy.local"
+          git add infinite-buy/config.json
+          git commit -m "infinite-buy: toggle ${PREV} → ${NEXT}"
+          git push
+
+      - name: Summary
+        run: |
+          echo "## Infinite Buy Toggle" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Previous: **$PREV**" >> $GITHUB_STEP_SUMMARY
+          echo "- Current: **$NEXT**" >> $GITHUB_STEP_SUMMARY

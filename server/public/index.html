@@ -427,6 +427,18 @@
       text-align: right; font-size: 0.68em; color: var(--text3); margin-top: 4px; padding-right: 4px;
     }
 
+    /* ===== Stock Alert Tabs ===== */
+    .sa-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 16px; }
+    .sa-tab {
+      padding: 8px 20px; font-size: 0.82em; font-weight: 600; color: var(--text3);
+      cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s; user-select: none;
+    }
+    .sa-tab:hover { color: var(--text); }
+    .sa-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .sa-tab-content { display: none; }
+    .sa-tab-content.active { display: block; }
+
     /* ===== Stock Alert ===== */
     .sa-section { margin-bottom: 24px; }
     .sa-section-title {
@@ -462,8 +474,9 @@
     .sa-price-up { color: var(--red); }
     .sa-price-down { color: var(--accent); }
 
-    .sa-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-    .sa-field { display: flex; flex-direction: column; gap: 2px; }
+    .sa-fields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+    .sa-field-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+    .sa-field { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 80px; }
     .sa-field label { font-size: 0.68em; color: var(--text3); font-weight: 600; text-transform: uppercase; }
     .sa-field .sa-val { font-size: 0.84em; font-weight: 500; }
     .sa-field input, .sa-field select {
@@ -472,6 +485,22 @@
     }
     .sa-field input:focus, .sa-field select:focus { border-color: var(--accent); }
     .sa-field select { appearance: none; cursor: pointer; }
+    .sa-subsection-title {
+      font-size: 0.76em; font-weight: 700; color: var(--text3); margin: 14px 0 8px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .sa-subsection-title .sa-count { font-weight: 400; }
+    .sa-badge-watchlist {
+      font-size: 0.66em; padding: 2px 6px; border-radius: var(--radius-xs);
+      background: var(--yellow, #f59e0b); color: #000; font-weight: 600;
+    }
+    .sa-card-watchlist { border-left: 3px solid var(--yellow, #f59e0b); }
+    .sa-buy-history { display: flex; gap: 6px; flex-wrap: wrap; }
+    .sa-buy-tag { font-size: 0.74em; padding: 3px 8px; border-radius: var(--radius-xs); background: var(--surface2); border: 1px solid var(--border); color: var(--text2); font-weight: 500; }
+    .sa-phase-input { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; margin-top: 4px; }
+    .sa-phase-input-title { font-size: 0.72em; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
+    .sa-phase-input .sa-field-row { align-items: flex-end; }
+    .sa-phase-input .sa-btn { margin-top: 0; align-self: flex-end; height: 30px; }
 
     .sa-triggers { margin: 10px 0; }
     .sa-triggers-title { font-size: 0.72em; color: var(--text3); font-weight: 600; margin-bottom: 4px; }
@@ -683,7 +712,7 @@
       el.innerHTML = `<div class="section-label" style="margin-top:4px">전략 상세 설정</div>` +
         strategies.map(s => {
           const data = C.strategies?.[market]?.[s] ?? {};
-          if (!data || (Object.keys(data).length === 0 && s !== 'dantaV1')) return '';
+          if (!data || (Object.keys(data).length === 0 && s !== 'dantaV2')) return '';
           const label = STRAT_LABELS[s] || s;
           const isOpen = openPanels.has(market + ':' + s);
           return `
@@ -716,7 +745,7 @@
       infinite: '무한매수법',
       vr: 'VR 리밸런싱',
       swing: '스윙매매',
-      dantaV1: '단타 v1'
+      dantaV2: '단타 v2'
     };
 
     function strategyCheckboxes(market, allOptions, activeList) {
@@ -742,7 +771,7 @@
     }
 
     function renderDomestic(mc) {
-      const options = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실사오팔 v2'],['swing','스윙매매'],['dantaV1','단타 v1']];
+      const options = [['momentumScalp','모멘텀 스캘핑'],['realtimeDdsobV2','실사오팔 v2'],['swing','스윙매매'],['dantaV2','단타 v2']];
       const activeList = mc.strategies || (mc.strategy ? [mc.strategy] : []);
       if (mc.swingEnabled && !activeList.includes('swing')) activeList.push('swing');
       return `
@@ -768,7 +797,7 @@
     function renderStrategyContent(market, strategy, data) {
       if (strategy === 'swing') return renderSwing(data, market);
       if (strategy === 'momentumScalp') return renderMomentumScalp(data, market);
-      if (strategy === 'dantaV1') return renderDantaV1(data, market);
+      if (strategy === 'dantaV2') return renderDantaV2(data, market);
       if (strategy === 'vr') return renderVR(data, market);
       if (strategy === 'infinite') return renderInfinite(data, market);
       if (strategy.startsWith('realtimeDdsobV2')) {
@@ -822,45 +851,79 @@
       `;
     }
 
-    // -- Danta V1 --
-    function renderDantaV1(d, market) {
+    // -- Danta V2 --
+    function renderDantaV2(d, market) {
       const st = (activeStrategyTab === 'config' || activeStrategyTab === 'status') ? activeStrategyTab : 'config';
       return `
         <div class="subtabs">
-          <button class="subtab ${st==='config'?'active':''}" onclick="activeStrategyTab='config';renderStrategyDetail('${market}','dantaV1')">설정</button>
-          <button class="subtab ${st==='status'?'active':''}" onclick="activeStrategyTab='status';renderStrategyDetail('${market}','dantaV1')">상태</button>
+          <button class="subtab ${st==='config'?'active':''}" onclick="activeStrategyTab='config';renderStrategyDetail('${market}','dantaV2')">설정</button>
+          <button class="subtab ${st==='status'?'active':''}" onclick="activeStrategyTab='status';renderStrategyDetail('${market}','dantaV2')">상태</button>
         </div>
-        ${st === 'config' ? renderDantaV1Config(d, market) : renderDantaV1Status(market)}
+        ${st === 'config' ? renderDantaV2Config(d, market) : renderDantaV2Status(market)}
       `;
     }
 
-    function renderDantaV1Config(d, market) {
+    function renderDantaV2Config(d, market) {
+      const S = 'dantaV2';
+      // 기본값을 객체에 미리 세팅 (저장 시 누락 방지)
+      const defaults = {
+        enabled: false, shadowMode: true, amountPerStock: 500000, maxSlots: 1,
+        targetPct: 0.5, stopPct: 0.5, timeStopSec: 30, costRatePct: 0.23,
+        candidatePollIntervalMs: 15000, positionMonitorIntervalMs: 400,
+        maxConsecutiveEntriesPerSymbol: 0, cooldownAfterStopLossSec: 0,
+        forceCloseBeforeMarketEnd: true, entryStartMinute: 540, entryEndMinute: 900,
+      };
+      const s = getStrat(market, S);
+      for (const [k, v] of Object.entries(defaults)) { if (s[k] === undefined) s[k] = d[k] ?? v; }
       return `
         <div class="card">
-          ${toggleRow('활성화', '', d.enabled, `onStratField('${market}','dantaV1','enabled',this.checked)`)}
-          ${toggleRow('쉐도우 모드', '실제 주문 없이 가상 체결 시뮬레이션', d.shadowMode !== false, `onStratField('${market}','dantaV1','shadowMode',this.checked)`)}
+          ${toggleRow('활성화', '', d.enabled, `onStratField('${market}','${S}','enabled',this.checked)`)}
+          ${toggleRow('쉐도우 모드', '실제 주문 없이 가상 체결 시뮬레이션', d.shadowMode !== false, `onStratField('${market}','${S}','shadowMode',this.checked)`)}
         </div>
         <div class="card">
           <div class="card-header">HTS 조건검색</div>
           ${conditionPickerRow(d.conditionSeq, d.conditionName, `function(el){
             if(!el.value)return;
             var parts=el.value.split('|');
-            onStratField('${market}','dantaV1','conditionSeq',parts[0]);
-            onStratField('${market}','dantaV1','conditionName',parts[1]);
+            onStratField('${market}','${S}','conditionSeq',parts[0]);
+            onStratField('${market}','${S}','conditionName',parts[1]);
           }`)}
         </div>
         <div class="card">
           <div class="card-header">투자 설정</div>
-          ${numberRow('종목당 금액', '종목 1개당 투입 금액', d.amountPerStock || 500000, `onStratFieldNum('${market}','dantaV1','amountPerStock',this.value)`, '원')}
-          ${numberRow('동시 보유', '최대 동시 보유 종목 수', d.maxSlots || 1, `onStratFieldNum('${market}','dantaV1','maxSlots',this.value)`, '종목')}
+          ${numberRow('종목당 금액', '종목 1개당 투입 금액', d.amountPerStock || 500000, `onStratFieldNum('${market}','${S}','amountPerStock',this.value)`, '원')}
+          ${numberRow('동시 보유', '최대 동시 보유 종목 수', d.maxSlots || 1, `onStratFieldNum('${market}','${S}','maxSlots',this.value)`, '종목')}
+        </div>
+        <div class="card">
+          <div class="card-header">전략 파라미터</div>
+          ${numberRow('익절 %', '목표 수익률', d.targetPct ?? 0.5, `onStratFieldNum('${market}','${S}','targetPct',this.value)`, '%')}
+          ${numberRow('손절 %', '손절 기준', d.stopPct ?? 0.5, `onStratFieldNum('${market}','${S}','stopPct',this.value)`, '%')}
+          ${numberRow('시간청산', '진입 후 자동 청산까지 시간', d.timeStopSec ?? 30, `onStratFieldNum('${market}','${S}','timeStopSec',this.value)`, '초')}
+          ${numberRow('비용률', '왕복 수수료+세금', d.costRatePct ?? 0.23, `onStratFieldNum('${market}','${S}','costRatePct',this.value)`, '%')}
+        </div>
+        <div class="card">
+          <div class="card-header">루프 타이밍</div>
+          ${numberRow('조건검색 간격', '후보 탐색 주기', d.candidatePollIntervalMs || 15000, `onStratFieldNum('${market}','${S}','candidatePollIntervalMs',this.value)`, 'ms')}
+          ${numberRow('포지션 감시', '체결/청산 감시 주기', d.positionMonitorIntervalMs || 400, `onStratFieldNum('${market}','${S}','positionMonitorIntervalMs',this.value)`, 'ms')}
+        </div>
+        <div class="card">
+          <div class="card-header">리스크 관리</div>
+          ${numberRow('연속 진입 제한', '같은 종목 최대 연속 진입 (0=무제한)', d.maxConsecutiveEntriesPerSymbol ?? 0, `onStratFieldNum('${market}','${S}','maxConsecutiveEntriesPerSymbol',this.value)`, '회')}
+          ${numberRow('손절 후 쿨다운', '손절 후 재진입 대기', d.cooldownAfterStopLossSec ?? 0, `onStratFieldNum('${market}','${S}','cooldownAfterStopLossSec',this.value)`, '초')}
+          ${toggleRow('장 종료 전 강제 청산', '15:20 이후 잔여 포지션 청산', d.forceCloseBeforeMarketEnd !== false, `onStratField('${market}','${S}','forceCloseBeforeMarketEnd',this.checked)`)}
+        </div>
+        <div class="card">
+          <div class="card-header">운영 시간 (KST)</div>
+          ${numberRow('진입 시작', '분 단위 (540=09:00)', d.entryStartMinute ?? 540, `onStratFieldNum('${market}','${S}','entryStartMinute',this.value)`, '분')}
+          ${numberRow('진입 종료', '분 단위 (900=15:00)', d.entryEndMinute ?? 900, `onStratFieldNum('${market}','${S}','entryEndMinute',this.value)`, '분')}
         </div>
         <div class="save-bar">
-          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','dantaV1')">저장</button>
+          <button class="btn btn-primary" onclick="doSaveStrategy('${market}','${S}')">저장</button>
         </div>
       `;
     }
 
-    async function renderDantaV1Status(market) {
+    async function renderDantaV2Status(market) {
       const el = document.getElementById('strategy-detail');
       if (!el) return '';
 
@@ -1833,6 +1896,7 @@
     const SA_API = '/stock-alerts';
     let saAlerts = [];
     let saLookupResult = null;
+    let saActiveTab = 'swing';
 
     function fmtKRW(n) { return n != null ? Number(n).toLocaleString('ko-KR') : '-'; }
     function fmtUSD(n) { return n != null ? Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'; }
@@ -1873,9 +1937,9 @@
     async function saRegister() {
       const ticker = $('sa-ticker-input').value.trim();
       const initialBuyPrice = Number($('sa-buy-price').value);
-      const initialBuyAmount = Number($('sa-buy-amount').value);
-      if (!ticker || !initialBuyPrice || !initialBuyAmount) {
-        toast('종목코드, 1차 매수가, 1차 매수금액을 입력하세요', 'error');
+      const holdingQty = Number($('sa-buy-qty').value);
+      if (!ticker || !initialBuyPrice || !holdingQty) {
+        toast('종목코드, 1차 매수가, 보유수량을 입력하세요', 'error');
         return;
       }
       try {
@@ -1883,7 +1947,7 @@
         const res = await fetch(SA_API, {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({
-            ticker, initialBuyPrice, initialBuyAmount,
+            ticker, initialBuyPrice, holdingQty,
             stockName: saLookupResult?.stockName || '',
             market
           })
@@ -1896,12 +1960,67 @@
         toast('종목 알리미 등록 완료');
         $('sa-ticker-input').value = '';
         $('sa-buy-price').value = '';
-        $('sa-buy-amount').value = '';
+        $('sa-buy-qty').value = '';
         saLookupResult = null;
         $('sa-lookup-info').innerHTML = '';
         await loadStockAlerts();
       } catch (e) {
         toast('등록 실패', 'error');
+      }
+    }
+
+    async function saRegisterWatchlist() {
+      const ticker = $('sa-ticker-input').value.trim();
+      if (!ticker) {
+        toast('종목코드를 입력하세요', 'error');
+        return;
+      }
+      try {
+        const market = $('sa-market-select').value;
+        const res = await fetch(SA_API, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            ticker, type: 'watchlist',
+            stockName: saLookupResult?.stockName || '',
+            market
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          toast(err.error || '등록 실패', 'error');
+          return;
+        }
+        toast('관심종목 등록 완료');
+        $('sa-ticker-input').value = '';
+        $('sa-buy-price').value = '';
+        $('sa-buy-qty').value = '';
+        saLookupResult = null;
+        $('sa-lookup-info').innerHTML = '';
+        await loadStockAlerts();
+      } catch (e) {
+        toast('등록 실패', 'error');
+      }
+    }
+
+    async function saConvertToHolding(id) {
+      const safeId = CSS.escape(id);
+      const initialBuyPrice = Number(document.querySelector(`[data-sa-convert-price="${safeId}"]`).value);
+      const holdingQty = Number(document.querySelector(`[data-sa-convert-qty="${safeId}"]`).value);
+      if (!initialBuyPrice || !holdingQty) {
+        toast('매수가와 보유수량을 입력하세요', 'error');
+        return;
+      }
+      try {
+        const res = await fetch(`${SA_API}/${encodeURIComponent(id)}/convert`, {
+          method: 'PUT', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ initialBuyPrice, holdingQty })
+        });
+        if (res.ok) {
+          toast('보유종목으로 전환 완료');
+          await loadStockAlerts();
+        }
+      } catch (e) {
+        toast('전환 실패', 'error');
       }
     }
 
@@ -1940,6 +2059,36 @@
       }
     }
 
+    async function saCompleteBuyPhase(id, phase) {
+      const safeId = CSS.escape(id);
+      const priceField = phase === 2 ? 'buy2Price' : 'buy3Price';
+      const buyPrice = Number(document.querySelector(`[data-sa-buy${phase}-price="${safeId}"]`).value);
+      const avgPrice = Number(document.querySelector(`[data-sa-buy${phase}-avg="${safeId}"]`).value);
+      const holdingQty = Number(document.querySelector(`[data-sa-buy${phase}-qty="${safeId}"]`).value);
+      if (!buyPrice || !avgPrice || !holdingQty) {
+        toast(`${phase}차 매수가, 평단가, 수량을 모두 입력하세요`, 'error');
+        return;
+      }
+      try {
+        const body = {
+          [priceField]: buyPrice,
+          avgPrice,
+          holdingQty,
+          buyPhase: `buy${phase}_done`
+        };
+        const res = await fetch(`${SA_API}/${encodeURIComponent(id)}`, {
+          method: 'PUT', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        if (res.ok) {
+          toast(`${phase}차 매수 완료 저장`);
+          await loadStockAlerts();
+        }
+      } catch (e) {
+        toast('저장 실패', 'error');
+      }
+    }
+
     async function saDelete(id) {
       if (!confirm('이 종목 알리미를 삭제하시겠습니까?')) return;
       try {
@@ -1955,10 +2104,24 @@
       await saUpdate(id, 'active', active);
     }
 
+    function saSetTab(tab) {
+      saActiveTab = tab;
+      renderStockAlerts();
+    }
+
     function renderStockAlerts() {
+      const tabs = [
+        { id: 'swing', label: '스윙 알리미' },
+      ];
+
       let html = `
         <div class="sa-section">
-          <div class="sa-section-title">종목 알리미 <span class="sa-count">${saAlerts.length}종목</span></div>
+          <div class="sa-section-title">종목 알리미</div>
+          <div class="sa-tabs">
+            ${tabs.map(t => `<div class="sa-tab ${saActiveTab === t.id ? 'active' : ''}" onclick="saSetTab('${t.id}')">${t.label}</div>`).join('')}
+          </div>
+
+          <div class="sa-tab-content ${saActiveTab === 'swing' ? 'active' : ''}" data-sa-tab="swing">
 
           <div class="sa-form-card">
             <div class="sa-form-row">
@@ -1982,14 +2145,63 @@
                 <input id="sa-buy-price" class="input" type="number" style="width:120px" placeholder="50000">
               </div>
               <div class="sa-form-group">
-                <label>1차 매수금액</label>
-                <input id="sa-buy-amount" class="input" type="number" style="width:120px" placeholder="1000000">
+                <label>보유수량</label>
+                <input id="sa-buy-qty" class="input" type="number" style="width:100px" placeholder="20">
               </div>
               <button class="sa-btn sa-btn-primary" onclick="saRegister()">등록</button>
+              <button class="sa-btn sa-btn-default" onclick="saRegisterWatchlist()">관심 등록</button>
             </div>
           </div>`;
 
-      saAlerts.forEach(a => {
+      // --- 관심종목 섹션 ---
+      const watchlistAlerts = saAlerts.filter(a => a.type === 'watchlist');
+      const holdingAlerts = saAlerts.filter(a => a.type !== 'watchlist');
+
+      if (watchlistAlerts.length > 0) {
+        html += `<div class="sa-subsection-title">관심종목 <span class="sa-count">${watchlistAlerts.length}</span></div>`;
+        watchlistAlerts.forEach(a => {
+          const mk = a.market || 'KR';
+          const marketFlag = mk === 'US' ? '🇺🇸' : '🇰🇷';
+          html += `
+            <div class="sa-card sa-card-watchlist" style="opacity:${a.active ? 1 : 0.5}">
+              <div class="sa-card-header">
+                <div class="sa-card-header-left">
+                  <span class="sa-card-name">${marketFlag} ${a.stockName || a.ticker}</span>
+                  <span class="sa-card-ticker">${a.ticker}</span>
+                  <span class="sa-badge-watchlist">관심</span>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" ${a.active ? 'checked' : ''} onchange="saToggleActive('${a.id}', this.checked)">
+                  <span class="track"></span>
+                </label>
+              </div>
+              <div class="sa-card-body">
+                <div class="sa-price-row">
+                  <span class="sa-price-current">${a.lastCheckedPrice ? fmtSAPrice(a.lastCheckedPrice, mk) : '미조회'}</span>
+                </div>
+                ${a.ma20 ? `<div style="font-size:0.74em;color:var(--text2);margin-top:4px">20일선: ${fmtSAPrice(a.ma20, mk)} | 최고가: ${fmtSAPrice(a.highSinceEntry, mk)}</div>` : ''}
+                <div class="sa-phase-input" style="margin-top:8px">
+                  <div class="sa-phase-input-title">1차 매수 완료 → 보유 전환</div>
+                  <div class="sa-field-row">
+                    <div class="sa-field"><label>매수가</label><input type="number" data-sa-convert-price="${a.id}" placeholder="${a.lastCheckedPrice || ''}"></div>
+                    <div class="sa-field"><label>보유수량</label><input type="number" data-sa-convert-qty="${a.id}"></div>
+                    <button class="sa-btn sa-btn-primary" onclick="saConvertToHolding('${a.id}')">전환</button>
+                  </div>
+                </div>
+              </div>
+              <div class="sa-card-actions">
+                <button class="sa-btn sa-btn-danger" onclick="saDelete('${a.id}')">삭제</button>
+              </div>
+            </div>`;
+        });
+      }
+
+      // --- 보유종목 섹션 ---
+      if (holdingAlerts.length > 0) {
+        html += `<div class="sa-subsection-title">보유종목 <span class="sa-count">${holdingAlerts.length}</span></div>`;
+      }
+
+      holdingAlerts.forEach(a => {
         const t = a.triggers || {};
         const mk = a.market || 'KR';
         const marketFlag = mk === 'US' ? '🇺🇸' : '🇰🇷';
@@ -2022,31 +2234,50 @@
               </div>
 
               <div class="sa-fields">
-                <div class="sa-field">
-                  <label>매수단계</label>
-                  <select onchange="saUpdate('${a.id}','buyPhase',this.value)">
-                    <option value="buy1_done" ${a.buyPhase==='buy1_done'?'selected':''}>1차 완료</option>
-                    <option value="buy2_done" ${a.buyPhase==='buy2_done'?'selected':''}>2차 완료</option>
-                    <option value="buy3_done" ${a.buyPhase==='buy3_done'?'selected':''}>3차 완료</option>
-                  </select>
+                <div class="sa-buy-history">
+                  <span class="sa-buy-tag">1차 ${fmtSAPrice(a.initialBuyPrice, mk)}</span>
+                  ${a.buy2Price ? `<span class="sa-buy-tag">2차 ${fmtSAPrice(a.buy2Price, mk)}</span>` : ''}
+                  ${a.buy3Price ? `<span class="sa-buy-tag">3차 ${fmtSAPrice(a.buy3Price, mk)}</span>` : ''}
                 </div>
-                <div class="sa-field">
-                  <label>익절단계</label>
-                  <select onchange="saUpdate('${a.id}','sellPhase',this.value)">
-                    <option value="none" ${a.sellPhase==='none'?'selected':''}>없음</option>
-                    <option value="profit1_done" ${a.sellPhase==='profit1_done'?'selected':''}>1차 익절</option>
-                    <option value="profit2_done" ${a.sellPhase==='profit2_done'?'selected':''}>2차 익절</option>
-                    <option value="trailing" ${a.sellPhase==='trailing'?'selected':''}>트레일링</option>
-                  </select>
+                <div class="sa-field-row">
+                  <div class="sa-field">
+                    <label>평단가</label>
+                    <input type="number" data-sa-avg="${a.id}" value="${a.avgPrice || ''}">
+                  </div>
+                  <div class="sa-field">
+                    <label>보유수량</label>
+                    <input type="number" data-sa-qty="${a.id}" value="${a.holdingQty || ''}">
+                  </div>
+                  <div class="sa-field">
+                    <label>익절단계</label>
+                    <select onchange="saUpdate('${a.id}','sellPhase',this.value)">
+                      <option value="none" ${a.sellPhase==='none'?'selected':''}>없음</option>
+                      <option value="profit1_done" ${a.sellPhase==='profit1_done'?'selected':''}>1차 익절</option>
+                      <option value="profit2_done" ${a.sellPhase==='profit2_done'?'selected':''}>2차 익절</option>
+                      <option value="trailing" ${a.sellPhase==='trailing'?'selected':''}>트레일링</option>
+                    </select>
+                  </div>
                 </div>
-                <div class="sa-field">
-                  <label>평균단가</label>
-                  <input type="number" data-sa-avg="${a.id}" value="${a.avgPrice || ''}">
-                </div>
-                <div class="sa-field">
-                  <label>보유수량</label>
-                  <input type="number" data-sa-qty="${a.id}" value="${a.holdingQty || ''}">
-                </div>
+                ${a.buyPhase === 'buy1_done' ? `
+                <div class="sa-phase-input">
+                  <div class="sa-phase-input-title">2차 매수 완료 입력</div>
+                  <div class="sa-field-row">
+                    <div class="sa-field"><label>2차 매수가</label><input type="number" data-sa-buy2-price="${a.id}" placeholder="${fmtKRW(Math.round(a.initialBuyPrice * 0.97))}"></div>
+                    <div class="sa-field"><label>새 평단가</label><input type="number" data-sa-buy2-avg="${a.id}"></div>
+                    <div class="sa-field"><label>총 보유수량</label><input type="number" data-sa-buy2-qty="${a.id}"></div>
+                    <button class="sa-btn sa-btn-primary" onclick="saCompleteBuyPhase('${a.id}', 2)">완료</button>
+                  </div>
+                </div>` : ''}
+                ${a.buyPhase === 'buy2_done' ? `
+                <div class="sa-phase-input">
+                  <div class="sa-phase-input-title">3차 매수 완료 입력</div>
+                  <div class="sa-field-row">
+                    <div class="sa-field"><label>3차 매수가</label><input type="number" data-sa-buy3-price="${a.id}" placeholder="${fmtKRW(Math.round(a.initialBuyPrice * 0.94))}"></div>
+                    <div class="sa-field"><label>새 평단가</label><input type="number" data-sa-buy3-avg="${a.id}"></div>
+                    <div class="sa-field"><label>총 보유수량</label><input type="number" data-sa-buy3-qty="${a.id}"></div>
+                    <button class="sa-btn sa-btn-primary" onclick="saCompleteBuyPhase('${a.id}', 3)">완료</button>
+                  </div>
+                </div>` : ''}
               </div>
 
               <div class="sa-triggers">
@@ -2074,7 +2305,7 @@
           </div>`;
       });
 
-      html += `</div>`;
+      html += `</div></div>`;
       $('stock-alert-section').innerHTML = html;
     }
 

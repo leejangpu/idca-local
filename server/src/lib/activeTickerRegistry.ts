@@ -70,7 +70,7 @@ function buildRegistry(): Map<string, ActiveTickerEntry> {
     collectActive(map, store, 'momentumScalpState', 'momentumScalp', 'domestic');
     collectActive(map, store, 'realtimeDdsobV2State', 'realtimeDdsobV2');
     collectActive(map, store, 'swingState', 'swing', 'domestic');
-    collectActive(map, store, 'dantaV1State', 'dantaV1', 'domestic');
+    collectActive(map, store, 'dantaV2State', 'dantaV2', 'domestic');
     collectActive(map, store, 'cycles', 'infinite', 'overseas');
     collectActive(map, store, 'vrState', 'vr', 'overseas');
   }

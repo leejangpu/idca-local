@@ -12,7 +12,7 @@ import { runRealtimeV2KR, runRealtimeV2US } from './runners/realtimeV2';
 import { runSwingTradingLoop, runEodSetupScan, submitPendingOrders, checkPendingFills, cancelUnfilledOrders } from './runners/swingTrading';
 import { runMonthlyMaCrossover } from './runners/monthlyMaCrossover';
 import { startDantaWorker } from './runners/danta/dantaScheduler';
-import { checkStockAlerts, checkStockAlerts20MA } from './runners/stockAlert';
+import { checkStockAlertsByClose } from './runners/stockAlert';
 import { getEnabledAccounts, AccountContext } from './lib/accountContext';
 import type { SwingConfig } from './lib/swingCalculator';
 
@@ -55,24 +55,14 @@ export function registerAllCrons(): void {
     }
   }
 
-  // 종목 알리미 — 매분 (09:00~15:30 KST, KR 장중)
-  cron.schedule('*/1 9-15 * * 1-5', () => {
-    checkStockAlerts().catch(err => console.error('[Cron] StockAlert error:', err));
-  }, { timezone: 'Asia/Seoul' });
-
-  // 종목 알리미 — 매분 (US 장중: 09:30~16:00 ET ≈ 23:30~06:00+1 KST)
-  cron.schedule('*/1 22-23,0-6 * * *', () => {
-    checkStockAlerts().catch(err => console.error('[Cron] StockAlert(US) error:', err));
-  }, { timezone: 'Asia/Seoul' });
-
-  // 종목 알리미 20MA — KR: 16:00 KST
+  // 종목 알리미 — KR 장마감 후 16:00 KST (종가 기준, 1일 1회)
   cron.schedule('0 16 * * 1-5', () => {
-    checkStockAlerts20MA().catch(err => console.error('[Cron] StockAlert:MA20 error:', err));
+    checkStockAlertsByClose('KR').catch(err => console.error('[Cron] StockAlert(KR) error:', err));
   }, { timezone: 'Asia/Seoul' });
 
-  // 종목 알리미 20MA — US: 장마감 후 07:00 KST (화~토)
+  // 종목 알리미 — US 장마감 후 07:00 KST (종가 기준, 1일 1회, 화~토)
   cron.schedule('0 7 * * 2-6', () => {
-    checkStockAlerts20MA().catch(err => console.error('[Cron] StockAlert:MA20(US) error:', err));
+    checkStockAlertsByClose('US').catch(err => console.error('[Cron] StockAlert(US) error:', err));
   }, { timezone: 'Asia/Seoul' });
 
   // 장마감 처리 KR (KST 16:00)

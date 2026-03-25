@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as localStore from '../lib/localStore';
 import { config } from '../config';
-import { getDantaWorkerStatus, getCandidatePool, getMetricsSnapshot } from '../runners/danta';
+import { getDantaWorkerStatus, getMetricsSnapshot } from '../runners/danta';
 
 export const statusRoutes = Router();
 
@@ -82,29 +82,15 @@ statusRoutes.get('/danta', (req, res) => {
   for (const account of registry.accounts) {
     if (accountId && account.id !== accountId) continue;
     const store = localStore.forAccount(account.id);
-    const positions = store.getAllStates<Record<string, unknown>>('dantaV1State');
+    const positions = store.getAllStates<Record<string, unknown>>('dantaV2State');
     const workerStatus = getDantaWorkerStatus(account.id);
-    const pool = getCandidatePool(account.id);
     const metrics = getMetricsSnapshot(account.id);
-
-    // 후보 요약
-    const candidates = Array.from(pool.values()).map(c => ({
-      ticker: c.ticker,
-      stockName: c.stockName,
-      phase: c.phase,
-      triggerHigh: c.triggerHigh,
-      pullbackLow: c.pullbackLow,
-      lastPrice: c.lastPrice,
-      tradeAmt: c.tradeAmt,
-      ageSec: Math.round((Date.now() - c.discoveredAt) / 1000),
-    }));
 
     results.push({
       accountId: account.id,
       nickname: account.nickname,
       worker: workerStatus,
       positions: Array.from(positions.entries()).map(([ticker, data]) => ({ ticker, ...data })),
-      candidates,
       metrics: {
         date: metrics.date,
         entries: metrics.counters['entry.success'] ?? 0,
@@ -131,7 +117,7 @@ statusRoutes.get('/summary', (_req, res) => {
       realtimeDdsobV2: flatStates('realtimeDdsobV2State').length,
       momentumScalp: flatStates('momentumScalpState').length,
       swing: flatStates('swingState').length,
-      dantaV1: flatStates('dantaV1State').length,
+      dantaV2: flatStates('dantaV2State').length,
     },
   });
 });

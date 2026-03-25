@@ -3,7 +3,7 @@
  */
 
 export type AlertRegistrationType = 'holding' | 'watchlist';
-export type BuyPhase = 'buy1_done' | 'buy2_done' | 'buy3_done';
+export type BuyPhase = 'none' | 'buy1_done' | 'buy2_done' | 'buy3_done';
 export type SellPhase = 'none' | 'profit1_done' | 'profit2_done' | 'trailing';
 export type AlertType = 'buy2' | 'buy3' | 'rapid_drop' | 'stop_loss' | 'profit1' | 'profit2' | 'trailing_ma20' | 'trailing_high';
 export type StockMarket = 'KR' | 'US';
@@ -17,8 +17,10 @@ export interface StockAlert {
 
   // 매수 정보
   initialBuyPrice: number;             // 1차 매수가
-  initialBuyAmount: number;            // 1차 매수금액 (50%)
+  initialBuyAmount: number;            // 1차 매수금액 (= initialBuyPrice * 초기수량)
   totalAmount: number;                 // 총 투자원금 (= initialBuyAmount * 2)
+  buy2Price: number | null;            // 2차 매수가 (실제 체결가)
+  buy3Price: number | null;            // 3차 매수가 (실제 체결가)
 
   // 사용자 입력 상태
   avgPrice: number;                    // 평균단가 (수동 입력)

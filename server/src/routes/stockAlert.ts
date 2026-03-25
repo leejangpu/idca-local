@@ -49,40 +49,52 @@ stockAlertRoutes.get('/', (_req, res) => {
   res.json(result);
 });
 
-// POST / — 등록
+// POST / — 등록 (holding: 매수가+수량 필수, watchlist: 종목만)
 stockAlertRoutes.post('/', async (req, res) => {
   try {
-    const { ticker, initialBuyPrice, initialBuyAmount, stockName, market: rawMarket } = req.body;
+    const { ticker, initialBuyPrice, holdingQty: rawQty, stockName, market: rawMarket, type: rawType } = req.body;
     const market: StockMarket = rawMarket === 'US' ? 'US' : 'KR';
-    if (!ticker || !initialBuyPrice || !initialBuyAmount) {
-      res.status(400).json({ error: 'ticker, initialBuyPrice, initialBuyAmount 필수' });
+    const regType = rawType === 'watchlist' ? 'watchlist' : 'holding';
+
+    if (!ticker) {
+      res.status(400).json({ error: 'ticker 필수' });
+      return;
+    }
+    if (regType === 'holding' && (!initialBuyPrice || !rawQty)) {
+      res.status(400).json({ error: 'ticker, initialBuyPrice, holdingQty 필수' });
       return;
     }
 
     const now = new Date().toISOString();
     const alertId = market === 'US' ? `US:${ticker}` : ticker;
 
-    // 중복 체크 (US 종목은 US: prefix로 저장)
+    // 중복 체크
     const existingById = localStore.getState<StockAlert>(COLLECTION, alertId);
     if (existingById) {
       res.status(409).json({ error: '이미 등록된 종목입니다' });
       return;
     }
 
+    const initPrice = Number(initialBuyPrice) || 0;
+    const initQty = Number(rawQty) || 0;
+    const initialBuyAmount = initPrice * initQty;
+
     const alert: StockAlert = {
       id: alertId,
       ticker,
       stockName: stockName || ticker,
       market,
-      type: 'holding',
-      initialBuyPrice: Number(initialBuyPrice),
-      initialBuyAmount: Number(initialBuyAmount),
-      totalAmount: Number(initialBuyAmount) * 2,
-      avgPrice: Number(initialBuyPrice),
-      holdingQty: 0,
-      buyPhase: 'buy1_done',
+      type: regType,
+      initialBuyPrice: initPrice,
+      initialBuyAmount,
+      totalAmount: initialBuyAmount * 2,
+      buy2Price: null,
+      buy3Price: null,
+      avgPrice: initPrice,
+      holdingQty: initQty,
+      buyPhase: regType === 'watchlist' ? 'none' : 'buy1_done',
       sellPhase: 'none',
-      highSinceEntry: Number(initialBuyPrice),
+      highSinceEntry: initPrice,
       lastCheckedPrice: 0,
       lastCheckedAt: '',
       ma20: null,
@@ -101,6 +113,41 @@ stockAlertRoutes.post('/', async (req, res) => {
   }
 });
 
+// PUT /:id/convert — 관심종목 → 보유종목 전환
+stockAlertRoutes.put('/:id/convert', (req, res) => {
+  try {
+    const { id } = req.params;
+    const alert = localStore.getState<StockAlert>(COLLECTION, id);
+    if (!alert) {
+      res.status(404).json({ error: '종목을 찾을 수 없습니다' });
+      return;
+    }
+    const { initialBuyPrice, holdingQty } = req.body;
+    if (!initialBuyPrice || !holdingQty) {
+      res.status(400).json({ error: 'initialBuyPrice, holdingQty 필수' });
+      return;
+    }
+    const price = Number(initialBuyPrice);
+    const qty = Number(holdingQty);
+    alert.type = 'holding';
+    alert.initialBuyPrice = price;
+    alert.initialBuyAmount = price * qty;
+    alert.totalAmount = price * qty * 2;
+    alert.avgPrice = price;
+    alert.holdingQty = qty;
+    alert.buyPhase = 'buy1_done';
+    alert.highSinceEntry = price;
+    alert.alertsSent = emptyAlertsSent();
+    alert.updatedAt = new Date().toISOString();
+
+    localStore.setState(COLLECTION, id, alert);
+    res.json({ ...alert, triggers: computeTriggers(alert) });
+  } catch (err) {
+    console.error('[StockAlert:Route] 전환 오류:', err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // PUT /:id — 상태 업데이트
 stockAlertRoutes.put('/:id', (req, res) => {
   try {
@@ -111,7 +158,7 @@ stockAlertRoutes.put('/:id', (req, res) => {
       return;
     }
 
-    const allowed: (keyof StockAlert)[] = ['avgPrice', 'holdingQty', 'buyPhase', 'sellPhase', 'active'];
+    const allowed: (keyof StockAlert)[] = ['avgPrice', 'holdingQty', 'buyPhase', 'sellPhase', 'active', 'buy2Price', 'buy3Price', 'type'];
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
         (alert as unknown as Record<string, unknown>)[key] = req.body[key];

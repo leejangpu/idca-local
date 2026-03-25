@@ -1,8 +1,8 @@
 /**
- * 단타 v1 — 로그 모듈
+ * 단타 v2 — 로그 모듈
  *
  * 로그 컬렉션별 기록:
- * - dantaScanLogs: 조건검색 결과 & 후보 상태 변화
+ * - dantaScanLogs: 조건검색 결과
  * - dantaOrderLogs: 주문 기록 (매수/매도)
  * - dantaTradeLogs / dantaShadowLogs: 거래 완결 기록
  */
@@ -13,15 +13,13 @@ import { type AccountContext } from '../../lib/accountContext';
 import {
   type OrderLogEntry,
   type TradeLogEntry,
-  type DantaCandidate,
-  type CandidatePhase,
   DANTA_TRADE_LOGS,
   DANTA_SHADOW_LOGS,
   DANTA_SCAN_LOGS,
   DANTA_ORDER_LOGS,
 } from './dantaTypes';
 
-const TAG = '[DantaV1]';
+const TAG = '[DantaV2]';
 
 function getStore(ctx?: AccountContext) {
   return ctx?.store ?? localStore;
@@ -37,6 +35,7 @@ export function logConditionResult(
     conditionName: string;
     totalCandidates: number;
     newCandidates: number;
+    bought: number;
     candidates: Array<{ code: string; name: string; price: string; tradeAmt: string }>;
   },
   ctx?: AccountContext,
@@ -47,35 +46,7 @@ export function logConditionResult(
     ...params,
     timestamp: new Date().toISOString(),
   });
-  console.log(`${TAG} Scan: ${params.totalCandidates} found, ${params.newCandidates} new`);
-}
-
-// ========================================
-// 후보 상태 전이 로그
-// ========================================
-
-export function logCandidatePhaseChange(
-  candidate: DantaCandidate,
-  fromPhase: CandidatePhase,
-  toPhase: CandidatePhase | 'ENTERED' | 'EXPIRED',
-  reason: string,
-  ctx?: AccountContext,
-): void {
-  const store = getStore(ctx);
-  store.appendLog(DANTA_SCAN_LOGS, getKSTDateString(), {
-    type: 'PHASE_CHANGE',
-    ticker: candidate.ticker,
-    stockName: candidate.stockName,
-    fromPhase,
-    toPhase,
-    reason,
-    triggerHigh: candidate.triggerHigh,
-    pullbackLow: candidate.pullbackLow,
-    lastPrice: candidate.lastPrice,
-    tradeAmt: candidate.tradeAmt,
-    timestamp: new Date().toISOString(),
-  });
-  console.log(`${TAG} ${candidate.ticker} ${fromPhase} → ${toPhase}: ${reason}`);
+  console.log(`${TAG} Scan: ${params.totalCandidates} found, ${params.newCandidates} new, ${params.bought} bought`);
 }
 
 // ========================================
@@ -113,25 +84,20 @@ export function logTradeComplete(entry: TradeLogEntry, ctx?: AccountContext): vo
 }
 
 // ========================================
-// 진입 상세 로그 (shadow 검증용)
+// 진입 상세 로그
 // ========================================
 
 export function logEntryDetail(
   params: {
     ticker: string;
     stockName: string;
-    triggerHigh: number;
-    breakoutLevel: number;
-    pullbackLow: number;
     currentPrice: number;
     askPrice: number;
     bidPrice: number;
-    bidQty1: number;
     entryPrice: number;
     quantity: number;
     targetPrice: number;
     stopLossPrice: number;
-    candidateAgeMs: number;
     shadowMode: boolean;
   },
   ctx?: AccountContext,
@@ -145,7 +111,7 @@ export function logEntryDetail(
 }
 
 // ========================================
-// 청산 상세 로그 (shadow 검증용)
+// 청산 상세 로그
 // ========================================
 
 export function logExitDetail(
@@ -158,13 +124,11 @@ export function logExitDetail(
     bidPrice: number;
     targetPrice: number;
     stopLossPrice: number;
-    pullbackLow: number;
-    triggerHigh: number;
     holdTimeMs: number;
     mfePct: number;
     maePct: number;
-    hasReachedPlusOneTick: boolean;
-    hasReachedPlusTwoTicks: boolean;
+    hasReachedHalfTarget: boolean;
+    hasReachedTarget: boolean;
     kstMinute: number;
     shadowMode: boolean;
   },

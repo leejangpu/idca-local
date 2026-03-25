@@ -1,5 +1,5 @@
 /**
- * 단타 v1 — 리스크 관리
+ * 단타 v2 — 리스크 관리
  *
  * 슬롯/쿨다운/재진입 횟수/일일 제한 등을 관리.
  * 포지션 진입 전 모든 리스크 체크를 통과해야 한다.
@@ -8,8 +8,8 @@
 import { type AccountContext } from '../../lib/accountContext';
 import { isTickerOccupied } from '../../lib/activeTickerRegistry';
 import {
-  type DantaV1Config,
-  type DantaV1State,
+  type DantaV2Config,
+  type DantaV2State,
   type TickerCooldown,
   type TickerEntryCount,
   type ExitReason,
@@ -98,11 +98,11 @@ export interface RiskCheckResult {
 export function canOpenPosition(
   ticker: string,
   todayStr: string,
-  config: DantaV1Config,
+  config: DantaV2Config,
   ctx: AccountContext,
 ): RiskCheckResult {
   // 1) 동시 보유 슬롯 체크
-  const states = ctx.store.getAllStates<DantaV1State>(DANTA_STATE_COLLECTION);
+  const states = ctx.store.getAllStates<DantaV2State>(DANTA_STATE_COLLECTION);
   const activeCount = Array.from(states.values()).filter(
     s => s.status === 'active' || s.status === 'pending_buy',
   ).length;
@@ -115,21 +115,23 @@ export function canOpenPosition(
     return { allowed: false, reason: `이미 보유/대기 중: ${ticker}` };
   }
 
-  // 3) 쿨다운 체크
-  if (isOnCooldown(ticker)) {
+  // 3) 쿨다운 체크 (0이면 비활성)
+  if (config.cooldownAfterStopLossSec > 0 && isOnCooldown(ticker)) {
     const remain = getCooldownRemainingSec(ticker);
     return { allowed: false, reason: `쿨다운 중: ${ticker} (${remain}초 남음)` };
   }
 
-  // 4) 연속 진입 횟수 체크
-  ensureDailyReset(todayStr);
-  const count = getEntryCount(ticker, todayStr);
-  if (count >= config.maxConsecutiveEntriesPerSymbol) {
-    return { allowed: false, reason: `연속 진입 제한: ${ticker} ${count}/${config.maxConsecutiveEntriesPerSymbol}회` };
+  // 4) 연속 진입 횟수 체크 (0이면 무제한)
+  if (config.maxConsecutiveEntriesPerSymbol > 0) {
+    ensureDailyReset(todayStr);
+    const count = getEntryCount(ticker, todayStr);
+    if (count >= config.maxConsecutiveEntriesPerSymbol) {
+      return { allowed: false, reason: `연속 진입 제한: ${ticker} ${count}/${config.maxConsecutiveEntriesPerSymbol}회` };
+    }
   }
 
   // 5) 타 전략 종목 점유 체크
-  if (isTickerOccupied(ticker, 'dantaV1')) {
+  if (isTickerOccupied(ticker, 'dantaV2')) {
     return { allowed: false, reason: `타 전략 점유: ${ticker}` };
   }
 
@@ -144,13 +146,12 @@ export function onPositionClosed(
   ticker: string,
   exitReason: ExitReason,
   todayStr: string,
-  config: DantaV1Config,
+  config: DantaV2Config,
 ): void {
   // 손절 시 쿨다운 적용
   if (exitReason === 'stop_loss') {
     setCooldown(ticker, exitReason, config.cooldownAfterStopLossSec * 1000);
   }
-  // 익절 후 재진입은 허용 (쿨다운 없음), 단 횟수 제한은 recordEntry에서 이미 관리
 }
 
 // ========================================

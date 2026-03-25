@@ -1,0 +1,17 @@
+{
+  "enabled": false,
+  "tickers": ["SOXL", "TQQQ"],
+  "strategyVersion": "v2.2",
+  "tickerConfigs": {
+    "SOXL": {
+      "splitCount": 30,
+      "targetProfit": 0.12
+    },
+    "TQQQ": {
+      "splitCount": 40,
+      "targetProfit": 0.10
+    }
+  },
+  "autoRestart": true,
+  "equalSplit": true
+}

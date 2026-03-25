@@ -1,11 +1,10 @@
 /**
- * 단타 v1 — 스케줄러 (상시 실행 워커)
+ * 단타 v2 — 스케줄러 (상시 실행 워커)
  *
  * cron이 아닌 setTimeout 기반 자체 루프로 동작.
- * 3개 독립 루프를 관리하며 각각 다른 주기로 실행:
- *   - candidatePoller: 15초
- *   - entryMonitor: 1초
- *   - positionMonitor: 400ms
+ * 2개 독립 루프를 관리하며 각각 다른 주기로 실행:
+ *   - candidatePoller: 15초 (빈 슬롯 있을 때만 조건검색 → 즉시 매수)
+ *   - positionMonitor: 400ms (보유 포지션 감시 → 청산)
  *
  * 장 시간(09:00~15:30 KST) 내에서만 활성화.
  * 서버 시작 시 startDantaWorker() 호출, 종료 시 stopDantaWorker() 호출.
@@ -14,15 +13,13 @@
 import { type AccountContext } from '../../lib/accountContext';
 import { getKRMarketHolidayName, getKSTDateString } from '../../lib/marketUtils';
 import {
-  type DantaV1Config,
+  type DantaV2Config,
   DEFAULT_DANTA_CONFIG,
 } from './dantaTypes';
 import {
   candidatePollerTick,
-  entryMonitorTick,
   positionMonitorTick,
   forceCloseOrphanPositions,
-  getCandidatePool,
   setMarketDataProvider,
   getMarketDataProvider,
 } from './dantaEngine';
@@ -31,7 +28,7 @@ import { createMarketDataProvider } from '../../lib/marketDataProvider';
 import { record, M, generateReport, getSnapshot, resetDaily } from './dantaMetrics';
 import { sendTelegramMessage, getUserTelegramChatId } from '../../lib/telegram';
 
-const TAG = '[DantaV1:Scheduler]';
+const TAG = '[DantaV2:Scheduler]';
 
 // ========================================
 // 워커 상태
@@ -41,11 +38,11 @@ interface WorkerState {
   accountId: string;
   running: boolean;
   candidateTimer: ReturnType<typeof setTimeout> | null;
-  entryTimer: ReturnType<typeof setTimeout> | null;
   positionTimer: ReturnType<typeof setTimeout> | null;
   marketCheckTimer: ReturnType<typeof setTimeout> | null;
   loopsActive: boolean;
   dailySummaryDone: boolean;
+  currentConfig: DantaV2Config | null;
 }
 
 const workers = new Map<string, WorkerState>();
@@ -75,18 +72,17 @@ function isMarketOpen(): boolean {
 // 설정 로드
 // ========================================
 
-function validateConfig(config: DantaV1Config): string[] {
+function validateConfig(config: DantaV2Config): string[] {
   const errors: string[] = [];
 
   if (!config.conditionSeq) errors.push('conditionSeq is required');
   if (!config.htsUserId) errors.push('htsUserId is required');
   if (config.amountPerStock <= 0) errors.push(`amountPerStock must be > 0 (got ${config.amountPerStock})`);
   if (config.maxSlots < 1 || config.maxSlots > 10) errors.push(`maxSlots must be 1~10 (got ${config.maxSlots})`);
-  if (config.targetTicks < 1) errors.push(`targetTicks must be >= 1 (got ${config.targetTicks})`);
-  if (config.stopTicks < 1) errors.push(`stopTicks must be >= 1 (got ${config.stopTicks})`);
-  if (config.timeStopSec < 5) errors.push(`timeStopSec must be >= 5 (got ${config.timeStopSec})`);
+  if (config.targetPct <= 0 || config.targetPct > 10) errors.push(`targetPct must be 0~10 (got ${config.targetPct})`);
+  if (config.stopPct <= 0 || config.stopPct > 10) errors.push(`stopPct must be 0~10 (got ${config.stopPct})`);
+  if (config.timeStopSec < 0) errors.push(`timeStopSec must be >= 0 (got ${config.timeStopSec})`);
   if (config.candidatePollIntervalMs < 5_000) errors.push(`candidatePollIntervalMs must be >= 5000 (got ${config.candidatePollIntervalMs})`);
-  if (config.entryMonitorIntervalMs < 200) errors.push(`entryMonitorIntervalMs must be >= 200 (got ${config.entryMonitorIntervalMs})`);
   if (config.positionMonitorIntervalMs < 100) errors.push(`positionMonitorIntervalMs must be >= 100 (got ${config.positionMonitorIntervalMs})`);
   if (config.entryStartMinute >= config.entryEndMinute) errors.push(`entryStartMinute(${config.entryStartMinute}) must be < entryEndMinute(${config.entryEndMinute})`);
   if (config.costRatePct < 0 || config.costRatePct > 5) errors.push(`costRatePct must be 0~5 (got ${config.costRatePct})`);
@@ -94,8 +90,8 @@ function validateConfig(config: DantaV1Config): string[] {
   return errors;
 }
 
-function loadConfig(ctx: AccountContext): DantaV1Config | null {
-  const stored = ctx.store.getStrategyConfig<Partial<DantaV1Config>>('domestic', 'dantaV1');
+function loadConfig(ctx: AccountContext): DantaV2Config | null {
+  const stored = ctx.store.getStrategyConfig<Partial<DantaV2Config>>('domestic', 'dantaV2');
   if (!stored?.enabled) return null;
 
   const config = {
@@ -104,7 +100,7 @@ function loadConfig(ctx: AccountContext): DantaV1Config | null {
     htsUserId: stored.htsUserId || ctx.credentials.htsUserId || '',
     conditionSeq: stored.conditionSeq || '',
     conditionName: stored.conditionName || '',
-  } as DantaV1Config;
+  } as DantaV2Config;
 
   // Real mode 안전 가드: pending_buy/pending_sell 체결확인 미구현
   if (!config.shadowMode) {
@@ -129,7 +125,6 @@ function loadConfig(ctx: AccountContext): DantaV1Config | null {
 // 루프 이름 → 메트릭 키 매핑
 const loopMetricKey: Record<string, string> = {
   CandidatePoller: M.DIST_LOOP_POLL,
-  EntryMonitor: M.DIST_LOOP_ENTRY,
   PositionMonitor: M.DIST_LOOP_POSITION,
 };
 
@@ -138,7 +133,7 @@ function scheduleLoop(
   name: string,
   fn: () => Promise<void>,
   intervalMs: number,
-  timerKey: 'candidateTimer' | 'entryTimer' | 'positionTimer',
+  timerKey: 'candidateTimer' | 'positionTimer',
 ): void {
   if (!ws.running || !ws.loopsActive) return;
 
@@ -172,9 +167,10 @@ function scheduleLoop(
 // 루프 시작/정지
 // ========================================
 
-async function startLoops(ws: WorkerState, ctx: AccountContext, config: DantaV1Config): Promise<void> {
+async function startLoops(ws: WorkerState, ctx: AccountContext, config: DantaV2Config): Promise<void> {
   if (ws.loopsActive) return;
   ws.loopsActive = true;
+  ws.currentConfig = config;
 
   // MarketDataProvider 시작 (WebSocket 우선, 실패 시 내부에서 REST fallback)
   try {
@@ -184,30 +180,22 @@ async function startLoops(ws: WorkerState, ctx: AccountContext, config: DantaV1C
     console.log(`${TAG} MarketDataProvider started (${provider.type})`);
   } catch (err) {
     console.error(`${TAG} MarketDataProvider start failed:`, err);
-    // provider 없이도 엔진은 REST fallback으로 동작 가능
   }
 
   console.log(`${TAG} Loops started (${ctx.accountId}) — ` +
-    `poll=${config.candidatePollIntervalMs}ms, entry=${config.entryMonitorIntervalMs}ms, ` +
+    `poll=${config.candidatePollIntervalMs}ms, ` +
     `position=${config.positionMonitorIntervalMs}ms, shadow=${config.shadowMode}`);
 
-  // Candidate Poller
+  // Candidate Poller (조건검색 → 즉시 매수) — ws.currentConfig를 참조하여 항상 최신 설정 사용
   scheduleLoop(ws, 'CandidatePoller',
-    () => candidatePollerTick(ctx, config),
+    () => candidatePollerTick(ctx, ws.currentConfig!),
     config.candidatePollIntervalMs,
     'candidateTimer',
   );
 
-  // Entry Monitor
-  scheduleLoop(ws, 'EntryMonitor',
-    () => entryMonitorTick(ctx, config),
-    config.entryMonitorIntervalMs,
-    'entryTimer',
-  );
-
   // Position Monitor
   scheduleLoop(ws, 'PositionMonitor',
-    () => positionMonitorTick(ctx, config),
+    () => positionMonitorTick(ctx, ws.currentConfig!),
     config.positionMonitorIntervalMs,
     'positionTimer',
   );
@@ -216,7 +204,6 @@ async function startLoops(ws: WorkerState, ctx: AccountContext, config: DantaV1C
 async function stopLoops(ws: WorkerState): Promise<void> {
   ws.loopsActive = false;
   if (ws.candidateTimer) { clearTimeout(ws.candidateTimer); ws.candidateTimer = null; }
-  if (ws.entryTimer) { clearTimeout(ws.entryTimer); ws.entryTimer = null; }
   if (ws.positionTimer) { clearTimeout(ws.positionTimer); ws.positionTimer = null; }
 
   // MarketDataProvider 정지
@@ -250,6 +237,9 @@ function startMarketCheck(ws: WorkerState, ctx: AccountContext): void {
       if (!ws.loopsActive) {
         ws.dailySummaryDone = false;
         startLoops(ws, ctx, config);
+      } else {
+        // 설정 변경을 실행 중인 루프에 반영
+        ws.currentConfig = config;
       }
     } else {
       if (ws.loopsActive) {
@@ -262,10 +252,6 @@ function startMarketCheck(ws: WorkerState, ctx: AccountContext): void {
         if (!ws.dailySummaryDone) {
           ws.dailySummaryDone = true;
           writeDailySummary(ctx, config);
-
-          // 후보 풀 초기화
-          const pool = getCandidatePool(ctx.accountId);
-          pool.clear();
         }
       }
     }
@@ -277,7 +263,7 @@ function startMarketCheck(ws: WorkerState, ctx: AccountContext): void {
   check();
 }
 
-function writeDailySummary(ctx: AccountContext, config: DantaV1Config): void {
+function writeDailySummary(ctx: AccountContext, config: DantaV2Config): void {
   try {
     const todayStr = getKSTDateString();
     const collection = config.shadowMode ? 'dantaShadowLogs' : 'dantaTradeLogs';
@@ -336,7 +322,7 @@ async function sendDantaDailySummaryTelegram(
 
   const totalTrades = exits.length;
   if (totalTrades === 0) {
-    const msg = `<b>📊 단타${shadowMode ? '(shadow)' : ''} ${dateStr}</b>\n거래 없음`;
+    const msg = `<b>📊 단타v2${shadowMode ? '(shadow)' : ''} ${dateStr}</b>\n거래 없음`;
     await sendTelegramMessage(chatId, msg);
     return;
   }
@@ -364,7 +350,7 @@ async function sendDantaDailySummaryTelegram(
   const emoji = totalPnl >= 0 ? '📈' : '📉';
 
   const msg = [
-    `<b>${emoji} 단타${shadowMode ? '(shadow)' : ''} ${dateStr}</b>`,
+    `<b>${emoji} 단타v2${shadowMode ? '(shadow)' : ''} ${dateStr}</b>`,
     '',
     `승률: <b>${winRate}%</b> (${wins}W/${losses}L, 총 ${totalTrades}건)`,
     `수익: <b>${sign}${totalPnl.toLocaleString()}원</b>`,
@@ -380,7 +366,7 @@ async function sendDantaDailySummaryTelegram(
 // ========================================
 
 /**
- * 단타 v1 워커 시작.
+ * 단타 v2 워커 시작.
  * 서버 시작 시 1회 호출. 이후 장 시간에 따라 자동으로 루프를 켜고 끔.
  */
 export function startDantaWorker(ctx: AccountContext): void {
@@ -395,11 +381,11 @@ export function startDantaWorker(ctx: AccountContext): void {
     accountId,
     running: true,
     candidateTimer: null,
-    entryTimer: null,
     positionTimer: null,
     marketCheckTimer: null,
     loopsActive: false,
     dailySummaryDone: false,
+    currentConfig: null,
   };
 
   workers.set(accountId, ws);
@@ -409,7 +395,7 @@ export function startDantaWorker(ctx: AccountContext): void {
 }
 
 /**
- * 단타 v1 워커 정지.
+ * 단타 v2 워커 정지.
  */
 export function stopDantaWorker(accountId: string): void {
   const ws = workers.get(accountId);
@@ -429,16 +415,13 @@ export function stopDantaWorker(accountId: string): void {
 export function getDantaWorkerStatus(accountId: string): {
   running: boolean;
   loopsActive: boolean;
-  candidateCount: number;
 } {
   const ws = workers.get(accountId);
-  if (!ws) return { running: false, loopsActive: false, candidateCount: 0 };
+  if (!ws) return { running: false, loopsActive: false };
 
-  const pool = getCandidatePool(accountId);
   return {
     running: ws.running,
     loopsActive: ws.loopsActive,
-    candidateCount: pool.size,
   };
 }
 

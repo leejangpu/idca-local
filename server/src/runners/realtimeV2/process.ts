@@ -1829,7 +1829,7 @@ export async function processRealtimeDdsobV2Trading(
       console.log(`[RealtimeDdsobV2:${tag}] ${ticker} 1회분 매수금(${fp(amountPerRound)}) < 주가(${fp(currentPrice)}) → 매수 불가, 종목 제외`);
 
       if (buyRecords.length > 0) {
-        const result = await forceStopRealtimeDdsobV2Ticker(ticker, market, 'force_stop', strategyId);
+        const result = await forceStopRealtimeDdsobV2Ticker(ticker, market, 'force_stop', strategyId, ctx);
         if (chatId) {
           await sendTelegramMessage(chatId,
             `⚠️ <b>매수금 부족 → 청산</b> [${tickerConfig.stockName || ticker}]\n\n` +
@@ -2196,19 +2196,8 @@ export async function processRealtimeDdsobV2Trading(
       const hardStopPrice = avgBuyPrice * (1 - exhaustionPct / 100);
 
       if (currentPrice <= hardStopPrice) {
-        const lossPercent = ((currentPrice - avgBuyPrice) / avgBuyPrice * 100).toFixed(2);
         console.log(`[RealtimeDdsobV2:${tag}] Exhaustion hard stop: ${ticker} price ${fp(currentPrice)} <= ${fp(hardStopPrice)} (avg=${fp(avgBuyPrice)}, limit=-${exhaustionPct}%)`);
-        const result = await forceStopRealtimeDdsobV2Ticker(ticker, market, 'exhaustion_stop_loss', strategyId);
-
-        if (chatId) {
-          await sendTelegramMessage(chatId,
-            `🛑 <b>분할소진 손절</b> [${tickerConfig.stockName || ticker}]\n\n` +
-            `현재가: ${fp(currentPrice)} (평단: ${fp(avgBuyPrice)})\n` +
-            `손실률: ${lossPercent}% (한도: -${exhaustionPct}%)\n` +
-            `분할: ${buyRecords.length}/${splitCount} 소진\n` +
-            `${result.success ? result.message : `실패: ${result.message}`}`
-          );
-        }
+        await forceStopRealtimeDdsobV2Ticker(ticker, market, 'exhaustion_stop_loss', strategyId, ctx);
         return;
       }
     }
@@ -2218,7 +2207,7 @@ export async function processRealtimeDdsobV2Trading(
       const candles = (state.candlesSinceCycleStart as number) || 0;
       if (candles >= forceSellCandles) {
         console.log(`[RealtimeDdsobV2:${tag}] Force sell candles: ${ticker} ${candles} candles >= ${forceSellCandles} → full liquidation`);
-        const result = await forceStopRealtimeDdsobV2Ticker(ticker, market, 'force_sell_candles', strategyId);
+        const result = await forceStopRealtimeDdsobV2Ticker(ticker, market, 'force_sell_candles', strategyId, ctx);
 
         if (chatId) {
           await sendTelegramMessage(chatId,

@@ -1,5 +1,5 @@
 /**
- * 단타 v1 — 독립 실행 스크립트
+ * 단타 v2 — 독립 실행 스크립트
  *
  * 서버 전체를 띄우지 않고 단타 워커만 단독 실행.
  *
@@ -16,7 +16,7 @@ import { getEnabledAccounts } from '../lib/accountContext';
 import { startDantaWorker, stopAllDantaWorkers } from '../runners/danta/dantaScheduler';
 
 async function main() {
-  console.log('=== 단타 v1 워커 시작 ===');
+  console.log('=== 단타 v2 워커 시작 ===');
 
   const accounts = getEnabledAccounts();
   if (accounts.length === 0) {
@@ -33,7 +33,7 @@ async function main() {
 
   // Graceful shutdown
   const shutdown = () => {
-    console.log('\n=== 단타 v1 워커 종료 중... ===');
+    console.log('\n=== 단타 v2 워커 종료 중... ===');
     stopAllDantaWorkers();
     console.log('=== 종료 완료 ===');
     process.exit(0);

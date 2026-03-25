@@ -1,0 +1,50 @@
+name: Infinite Buy - Market Close
+
+on:
+  schedule:
+    - cron: '0 22 * * 1-5'  # 07:00 KST (22:00 UTC)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync-executions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: infinite-buy
+        run: npm install
+
+      - name: Sync executions
+        working-directory: infinite-buy
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO: ${{ secrets.KIS_ACCOUNT_NO }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: npx tsx src/main-close.ts
+
+      - name: Commit state changes
+        run: |
+          git config user.name "infinite-buy-bot"
+          git config user.email "bot@infinite-buy.local"
+          git add infinite-buy/state/ infinite-buy/logs/ infinite-buy/history/ infinite-buy/config.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "infinite-buy: close sync $(date -u +%Y-%m-%d)"
+            git pull --rebase
+            git push
+          fi

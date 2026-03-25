@@ -1,24 +1,21 @@
 /**
- * 단타 v1 — 주문 실행 레이어
+ * 단타 v2 — 주문 실행 레이어
  *
  * shadow mode: 가상 체결 시뮬레이션 (실제 주문 없음)
  * real mode: KIS API를 통한 실제 주문 (추후 구현)
- *
- * 두 모드 모두 동일한 인터페이스를 통해 접근하며,
- * 결과는 항상 OrderLogEntry로 기록된다.
  */
 
 import { type AccountContext } from '../../lib/accountContext';
 import { getOrRefreshToken } from '../../lib/kisApi';
 import {
-  type DantaV1State,
-  type DantaV1Config,
+  type DantaV2State,
+  type DantaV2Config,
   type ExitReason,
   DANTA_STATE_COLLECTION,
 } from './dantaTypes';
 import { logOrder, logTradeComplete } from './dantaLogger';
 
-const TAG = '[DantaV1:Exec]';
+const TAG = '[DantaV2:Exec]';
 
 // ========================================
 // 매수 실행
@@ -42,17 +39,15 @@ export async function executeBuy(
     quantity: number;
     targetPrice: number;
     stopLossPrice: number;
-    pullbackLow: number;
-    triggerHigh: number;
     allocatedAmount: number;
   },
-  config: DantaV1Config,
+  config: DantaV2Config,
 ): Promise<BuyResult> {
   const now = new Date().toISOString();
 
   if (config.shadowMode) {
     // Shadow: 즉시 가상 체결
-    const state: DantaV1State = {
+    const state: DantaV2State = {
       ticker: params.ticker,
       stockName: params.stockName,
       market: 'domestic',
@@ -62,8 +57,6 @@ export async function executeBuy(
       allocatedAmount: params.allocatedAmount,
       targetPrice: params.targetPrice,
       stopLossPrice: params.stopLossPrice,
-      pullbackLow: params.pullbackLow,
-      triggerHigh: params.triggerHigh,
       pendingOrderNo: null,
       sellOrderNo: null,
       enteredAt: now,
@@ -72,8 +65,8 @@ export async function executeBuy(
       shadowMode: true,
       bestProfitPct: null,
       worstProfitPct: null,
-      hasReachedPlusOneTick: false,
-      hasReachedPlusTwoTicks: false,
+      hasReachedHalfTarget: false,
+      hasReachedTarget: false,
     };
 
     ctx.store.setState(DANTA_STATE_COLLECTION, params.ticker, state);
@@ -87,7 +80,7 @@ export async function executeBuy(
       amount: params.price * params.quantity,
       orderType: 'LIMIT',
       shadowMode: true,
-      reason: 'breakout entry (shadow)',
+      reason: 'immediate entry (shadow)',
       orderNo: null,
       timestamp: now,
     }, ctx);
@@ -121,7 +114,7 @@ export async function executeBuy(
     const orderNo = orderResult.output?.ODNO ?? null;
 
     // pending_buy 상태로 저장 (체결 확인은 position-monitor에서)
-    const state: DantaV1State = {
+    const state: DantaV2State = {
       ticker: params.ticker,
       stockName: params.stockName,
       market: 'domestic',
@@ -131,8 +124,6 @@ export async function executeBuy(
       allocatedAmount: params.allocatedAmount,
       targetPrice: params.targetPrice,
       stopLossPrice: params.stopLossPrice,
-      pullbackLow: params.pullbackLow,
-      triggerHigh: params.triggerHigh,
       pendingOrderNo: orderNo,
       sellOrderNo: null,
       enteredAt: now,
@@ -141,8 +132,8 @@ export async function executeBuy(
       shadowMode: false,
       bestProfitPct: null,
       worstProfitPct: null,
-      hasReachedPlusOneTick: false,
-      hasReachedPlusTwoTicks: false,
+      hasReachedHalfTarget: false,
+      hasReachedTarget: false,
     };
 
     ctx.store.setState(DANTA_STATE_COLLECTION, params.ticker, state);
@@ -156,7 +147,7 @@ export async function executeBuy(
       amount: params.price * params.quantity,
       orderType: 'LIMIT',
       shadowMode: false,
-      reason: 'breakout entry (real)',
+      reason: 'immediate entry (real)',
       orderNo,
       timestamp: now,
     }, ctx);
@@ -188,10 +179,10 @@ export interface SellResult {
 
 export async function executeSell(
   ctx: AccountContext,
-  position: DantaV1State,
+  position: DantaV2State,
   exitPrice: number,
   exitReason: ExitReason,
-  config: DantaV1Config,
+  config: DantaV2Config,
 ): Promise<SellResult> {
   const now = new Date().toISOString();
 
@@ -235,8 +226,6 @@ export async function executeSell(
       profitRatePct,
       netPnlPct,
       exitReason,
-      triggerHigh: position.triggerHigh,
-      pullbackLow: position.pullbackLow,
       holdTimeSec,
       shadowMode: true,
       timestamp: now,
@@ -298,8 +287,6 @@ export async function executeSell(
       profitRatePct,
       netPnlPct,
       exitReason,
-      triggerHigh: position.triggerHigh,
-      pullbackLow: position.pullbackLow,
       holdTimeSec,
       shadowMode: false,
       timestamp: now,

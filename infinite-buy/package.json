@@ -1,0 +1,17 @@
+{
+  "name": "infinite-buy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "open": "tsx src/main-open.ts",
+    "close": "tsx src/main-close.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

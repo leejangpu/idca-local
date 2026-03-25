@@ -1,19 +1,9 @@
 /**
- * 단타 v1 — 타입 정의 & 설정 & 상수
+ * 단타 v2 — 타입 정의 & 설정 & 상수
  *
- * 초단타 스캘핑 전략의 전체 타입 시스템.
- * 상태 머신: NEW_CANDIDATE → WAIT_PULLBACK → READY_TO_BREAKOUT → ENTERED → EXITED
+ * 조건검색 → 즉시 매수 → 청산 감시.
+ * 후보 등록/눌림/돌파 단계 없이 조건검색 결과를 바로 진입.
  */
-
-// ========================================
-// 후보 상태 머신 (in-memory)
-// ========================================
-
-export type CandidatePhase =
-  | 'NEW_CANDIDATE'       // 조건검색에서 수신, triggerHigh 계산 대기
-  | 'WAIT_PULLBACK'       // triggerHigh 설정됨, 눌림 대기
-  | 'READY_TO_BREAKOUT'   // 눌림 확인, 돌파 대기
-  | 'INVALIDATED';        // 3틱 이상 눌림 등으로 무효화
 
 // ========================================
 // 포지션 상태 (persisted)
@@ -22,44 +12,17 @@ export type CandidatePhase =
 export type PositionStatus = 'pending_buy' | 'active' | 'pending_sell';
 
 export type ExitReason =
-  | 'target'              // 익절 (+2틱)
-  | 'stop_loss'           // 손절 (-2틱)
-  | 'time_stop'           // 30초 경과 + MFE < +2틱 + 현재가 < +1틱
+  | 'target'              // 익절 (+N%)
+  | 'stop_loss'           // 손절 (-N%)
+  | 'time_stop'           // 시간청산
   | 'market_close'        // 장 종료 강제 청산
   | 'manual';             // 수동
-
-// ========================================
-// 후보 (in-memory, 비영속)
-// ========================================
-
-export interface DantaCandidate {
-  ticker: string;
-  stockName: string;
-  phase: CandidatePhase;
-  discoveredAt: number;               // Date.now()
-  tradeAmt: number;                   // 거래대금 (우선순위용)
-  bidQty1: number;                    // 1매수잔량 (우선순위 tiebreak)
-
-  // triggerHigh: 직전 3개 1분봉 최고가 (1회 고정)
-  triggerHigh: number | null;
-  triggerHighSetAt: number | null;
-
-  // pullback 추적
-  pullbackLow: number | null;         // 눌림 과정 저점
-  pullbackDetectedAt: number | null;
-
-  // 현재 시세 (매 스캔 갱신)
-  lastPrice: number;
-  lastAskPrice: number;
-  lastBidPrice: number;
-  lastUpdatedAt: number;
-}
 
 // ========================================
 // 포지션 (persisted to localStore)
 // ========================================
 
-export interface DantaV1State {
+export interface DantaV2State {
   ticker: string;
   stockName: string;
   market: 'domestic';
@@ -67,10 +30,8 @@ export interface DantaV1State {
   entryPrice: number;
   entryQuantity: number;
   allocatedAmount: number;
-  targetPrice: number;                // 익절가 (entryPrice + 2틱)
-  stopLossPrice: number;              // 손절가 (entryPrice - 2틱)
-  pullbackLow: number;                // 눌림 저점 (이탈 시 손절)
-  triggerHigh: number;                // 진입 기준 고점
+  targetPrice: number;
+  stopLossPrice: number;
   pendingOrderNo: string | null;
   sellOrderNo: string | null;
   enteredAt: string;                  // ISO, 체결 시점 (시간청산 기준)
@@ -79,15 +40,15 @@ export interface DantaV1State {
   shadowMode: boolean;
   bestProfitPct: number | null;       // MFE (최대 순행)
   worstProfitPct: number | null;      // MAE (최대 역행)
-  hasReachedPlusOneTick: boolean;     // +1틱 도달 여부
-  hasReachedPlusTwoTicks: boolean;    // +2틱 도달 여부
+  hasReachedHalfTarget: boolean;      // 목표의 절반 도달 여부
+  hasReachedTarget: boolean;          // 목표가 도달 여부
 }
 
 // ========================================
 // 설정
 // ========================================
 
-export interface DantaV1Config {
+export interface DantaV2Config {
   enabled: boolean;
   shadowMode: boolean;
   amountPerStock: number;             // 종목당 투입 금액 (KRW)
@@ -97,17 +58,12 @@ export interface DantaV1Config {
   conditionName: string;
 
   // 루프 타이밍
-  candidatePollIntervalMs: number;    // 15000
-  entryMonitorIntervalMs: number;     // 1000
-  positionMonitorIntervalMs: number;  // 400
+  candidatePollIntervalMs: number;    // 조건검색 간격 (15000)
+  positionMonitorIntervalMs: number;  // 포지션 감시 간격 (400)
 
   // 전략 파라미터
-  targetTicks: number;                // 익절 틱 수 (2)
-  stopTicks: number;                  // 손절 틱 수 (2)
-  pullbackValidMinTicks: number;      // 유효 눌림 최소 (1)
-  pullbackValidMaxTicks: number;      // 유효 눌림 최대 (2)
-  pullbackInvalidTicks: number;       // 무효 눌림 틱 수 (3)
-  breakoutConfirmTicks: number;       // 돌파 확인 틱 수 (1)
+  targetPct: number;                  // 익절 % (0.5)
+  stopPct: number;                    // 손절 % (0.5)
   timeStopSec: number;                // 시간청산 (30)
 
   // 리스크
@@ -122,9 +78,6 @@ export interface DantaV1Config {
 
   // safe mode: REST fallback 지속 시 신규 진입 중단 (ms)
   safeModeAfterFallbackMs: number;    // 60000 (60초)
-
-  // NEW_CANDIDATE TTL: triggerHigh 미계산 후보 만료 (ms)
-  newCandidateTtlMs: number;          // 120000 (2분)
 
   // warm-up: fallback 종료 후 정상 tick 확인 구간 (ms)
   warmupAfterFallbackMs: number;      // 5000 (5초)
@@ -160,8 +113,6 @@ export interface TradeLogEntry {
   profitRatePct: number;
   netPnlPct: number;
   exitReason: ExitReason;
-  triggerHigh: number;
-  pullbackLow: number;
   holdTimeSec: number;
   shadowMode: boolean;
   timestamp: string;
@@ -187,7 +138,7 @@ export interface TickerEntryCount {
 // 상수
 // ========================================
 
-export const DANTA_STATE_COLLECTION = 'dantaV1State';
+export const DANTA_STATE_COLLECTION = 'dantaV2State';
 export const DANTA_TRADE_LOGS = 'dantaTradeLogs';
 export const DANTA_SHADOW_LOGS = 'dantaShadowLogs';
 export const DANTA_SCAN_LOGS = 'dantaScanLogs';
@@ -197,28 +148,22 @@ export const DANTA_ORDER_LOGS = 'dantaOrderLogs';
 // 기본 설정값
 // ========================================
 
-export const DEFAULT_DANTA_CONFIG: Omit<DantaV1Config, 'htsUserId' | 'conditionSeq' | 'conditionName'> = {
+export const DEFAULT_DANTA_CONFIG: Omit<DantaV2Config, 'htsUserId' | 'conditionSeq' | 'conditionName'> = {
   enabled: false,
   shadowMode: true,
   amountPerStock: 500_000,
   maxSlots: 1,
   candidatePollIntervalMs: 15_000,
-  entryMonitorIntervalMs: 1_000,
   positionMonitorIntervalMs: 400,
-  targetTicks: 2,
-  stopTicks: 2,
-  pullbackValidMinTicks: 1,
-  pullbackValidMaxTicks: 2,
-  pullbackInvalidTicks: 3,
-  breakoutConfirmTicks: 1,
+  targetPct: 0.5,
+  stopPct: 0.5,
   timeStopSec: 30,
-  maxConsecutiveEntriesPerSymbol: 2,
-  cooldownAfterStopLossSec: 300,
+  maxConsecutiveEntriesPerSymbol: 0,
+  cooldownAfterStopLossSec: 0,
   forceCloseBeforeMarketEnd: true,
   costRatePct: 0.23,
-  entryStartMinute: 545,   // 09:05
+  entryStartMinute: 540,   // 09:00
   entryEndMinute: 900,      // 15:00
   safeModeAfterFallbackMs: 60_000,  // 60초
-  newCandidateTtlMs: 120_000,       // 2분
   warmupAfterFallbackMs: 5_000,     // 5초
 };
