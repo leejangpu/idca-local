@@ -12,7 +12,7 @@
  */
 
 import { KisApiClient } from './kisApi.js';
-import { calculateDecreaseRate } from './calculator.js';
+import { calculateDecreaseRate, calculateQuarterModeSeed } from './calculator.js';
 import type { QuarterModeState } from './calculator.js';
 import {
   readConfig, readCycleState, writeCycleState, appendLog, saveCycleHistory,
@@ -158,20 +158,29 @@ async function syncTicker(
     const hasBuyExec = tickerExecs.some(e => e.side === 'BUY');
 
     if (!quarterMode.isActive && hasSellExec) {
-      // MOC 매도 체결 → 쿼터모드 활성화
+      // MOC 매도 체결 → 쿼터모드 활성화 + 시드 재계산
+      const newRemainingCash = cycleData.principal - totalInvested;
+      const { quarterSeed, quarterBuyPerRound } = calculateQuarterModeSeed(
+        newRemainingCash, quarterMode.originalBuyPerRound
+      );
       const updatedState: CycleState = {
         ...cycleData,
-        quarterMode: { ...quarterMode, isActive: true },
-        totalInvested, remainingCash: cycleData.principal - totalInvested,
+        quarterMode: {
+          ...quarterMode,
+          isActive: true,
+          quarterSeed,
+          quarterBuyPerRound,
+        },
+        totalInvested, remainingCash: newRemainingCash,
         avgPrice, totalQuantity,
         totalBuyAmount: newTotalBuy, totalSellAmount: newTotalSell,
         totalRealizedProfit, updatedAt: nowISO(),
       };
       writeCycleState(ticker, updatedState);
-      console.log(`[Close] ${ticker}: Quarter mode ACTIVATED`);
+      console.log(`[Close] ${ticker}: Quarter mode ACTIVATED, seed=${fmtUSD(quarterSeed)}, buyPerRound=${fmtUSD(quarterBuyPerRound)}`);
       appendLog(today, {
         timestamp: nowISO(), ticker, action: 'SYNC',
-        details: { event: 'quarterModeActivated', totalQuantity, avgPrice },
+        details: { event: 'quarterModeActivated', totalQuantity, avgPrice, quarterSeed, quarterBuyPerRound },
       });
       return;
     }
