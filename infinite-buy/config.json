@@ -1,6 +1,9 @@
 {
-  "enabled": false,
-  "tickers": ["SOXL", "TQQQ"],
+  "enabled": true,
+  "tickers": [
+    "SOXL",
+    "TQQQ"
+  ],
   "strategyVersion": "v2.2",
   "tickerConfigs": {
     "SOXL": {
