@@ -28,7 +28,11 @@ jobs:
       - name: Toggle enabled state
         run: |
           CONFIG="infinite-buy/config.json"
+          echo "▶ Reading config: $CONFIG"
+          cat "$CONFIG"
           CURRENT=$(jq -r '.enabled' "$CONFIG")
+          echo "▶ Current enabled: $CURRENT"
+          echo "▶ Requested action: ${{ github.event.inputs.action }}"
 
           case "${{ github.event.inputs.action }}" in
             on)     NEW=true ;;
@@ -43,7 +47,7 @@ jobs:
           esac
 
           jq ".enabled = $NEW" "$CONFIG" > tmp.json && mv tmp.json "$CONFIG"
-          echo "Changed enabled: $CURRENT → $NEW"
+          echo "▶ Changed enabled: $CURRENT → $NEW"
           echo "PREV=$CURRENT" >> $GITHUB_ENV
           echo "NEXT=$NEW" >> $GITHUB_ENV
 
@@ -52,12 +56,16 @@ jobs:
           git config user.name "infinite-buy-bot"
           git config user.email "bot@infinite-buy.local"
           git add infinite-buy/config.json
+          echo "▶ Committing toggle change..."
           git commit -m "infinite-buy: toggle ${PREV} → ${NEXT}"
+          echo "▶ Pushing..."
           git push
+          echo "▶ Push complete"
 
       - name: Summary
         run: |
           echo "## Infinite Buy Toggle" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Previous: **$PREV**" >> $GITHUB_STEP_SUMMARY
-          echo "- Current: **$NEXT**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action:** ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Previous:** \`$PREV\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Current:** \`$NEXT\`" >> $GITHUB_STEP_SUMMARY
